@@ -89,7 +89,7 @@ export default function App() {
         }
       } catch (err) {
         console.error(err);
-        setError("কোম্পানির তালিকা লোড করতে সমস্যা হয়েছে। Webhook চেক করুন।");
+        setError("কোম্পানির তালিকা লোড করতে সমস্যা হয়েছে। আবার চেষ্টা করুন!");
       }
     };
 
@@ -470,7 +470,7 @@ export default function App() {
                       name="field_key"
                       value={formData.field_key}
                       onChange={handleChange}
-                      placeholder="e.g., customer_age"
+                      placeholder="e.g., order_field_key"
                       className="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm"
                       required
                     />
@@ -487,7 +487,7 @@ export default function App() {
                       name="field_label"
                       value={formData.field_label}
                       onChange={handleChange}
-                      placeholder="e.g., Customer Age"
+                      placeholder="e.g., order field label"
                       className="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm"
                       required
                     />
@@ -503,7 +503,7 @@ export default function App() {
                     name="question_text"
                     value={formData.question_text}
                     onChange={handleChange}
-                    placeholder="e.g., আপনার বয়স কত?"
+                    placeholder="e.g., AI asked this question"
                     className="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm"
                     required
                   />

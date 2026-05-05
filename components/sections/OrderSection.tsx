@@ -96,7 +96,40 @@ export default function App() {
     fetchCompanies();
   }, []);
 
-  // ২. নির্বাচিত কোম্পানির ফিল্ডগুলো ফেচ করা
+  // ২. ফিল্ডগুলো ফেচ করার ফাংশনকে আলাদা করা হলো (যাতে সেভ করার পরও কল করা যায়)
+  const fetchCompanyFields = async (companyId: string) => {
+    setFetchLoading(true);
+    try {
+      const response = await fetch(
+        `${GET_FIELDS_WEBHOOK}?company_id=${companyId}`,
+      );
+
+      if (response.ok) {
+        // Safely parse JSON to avoid "Unexpected end of JSON input"
+        const text = await response.text();
+        let data: any = [];
+
+        if (text) {
+          try {
+            data = JSON.parse(text);
+          } catch (e) {
+            console.warn("Fields API returned non-JSON response:", text);
+          }
+        }
+
+        setFields(Array.isArray(data) ? data : []);
+      } else {
+        setFields([]);
+      }
+    } catch (err) {
+      console.error("Fields fetch error:", err);
+      setFields([]);
+    } finally {
+      setFetchLoading(false);
+    }
+  };
+
+  // ৩. কোম্পানি সিলেক্ট হলে ফিল্ডগুলো ফেচ করা
   useEffect(() => {
     if (!selectedCompanyId) {
       setFields([]);
@@ -104,39 +137,7 @@ export default function App() {
       return;
     }
 
-    const fetchCompanyFields = async () => {
-      setFetchLoading(true);
-      try {
-        const response = await fetch(
-          `${GET_FIELDS_WEBHOOK}?company_id=${selectedCompanyId}`,
-        );
-
-        if (response.ok) {
-          // Safely parse JSON to avoid "Unexpected end of JSON input"
-          const text = await response.text();
-          let data: any = [];
-
-          if (text) {
-            try {
-              data = JSON.parse(text);
-            } catch (e) {
-              console.warn("Fields API returned non-JSON response:", text);
-            }
-          }
-
-          setFields(Array.isArray(data) ? data : []);
-        } else {
-          setFields([]);
-        }
-      } catch (err) {
-        console.error("Fields fetch error:", err);
-        setFields([]);
-      } finally {
-        setFetchLoading(false);
-      }
-    };
-
-    fetchCompanyFields();
+    fetchCompanyFields(selectedCompanyId);
   }, [selectedCompanyId]);
 
   // ইনপুট চেঞ্জ হ্যান্ডলার
@@ -224,26 +225,13 @@ export default function App() {
       if (!response.ok) throw new Error("Network response was not ok");
 
       if (formData.id) {
-        setFields(
-          fields.map((f) =>
-            f.id === formData.id
-              ? {
-                  ...formData,
-                  field_options: payload.data.field_options as any,
-                }
-              : f,
-          ),
-        );
         setSuccess("ফিল্ড সফলভাবে আপডেট হয়েছে!");
       } else {
-        const newField = {
-          ...formData,
-          id: `temp-${Date.now()}`,
-          field_options: payload.data.field_options as any,
-        };
-        setFields([...fields, newField]);
         setSuccess("নতুন ফিল্ড সফলভাবে যোগ করা হয়েছে!");
       }
+
+      // temp- ID ব্যবহার না করে ডেটাবেস থেকে রিয়েল ডেটা ফেচ করা
+      await fetchCompanyFields(selectedCompanyId);
 
       setIsModalOpen(false);
       resetForm();

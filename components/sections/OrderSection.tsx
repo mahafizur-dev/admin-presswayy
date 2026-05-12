@@ -31,6 +31,17 @@ interface Company {
   name: string;
 }
 
+// ডিফল্ট ফিল্ড কী এর তালিকা
+const DEFAULT_FIELD_KEYS = [
+  "product_name",
+  "status",
+  "customer_name",
+  "phone",
+  "address",
+  "total_amount",
+  "attributes",
+];
+
 // n8n Webhook URLs
 const GET_COMPANIES_WEBHOOK =
   "https://server.presswayy.com/webhook/get-companie-webhook";
@@ -50,6 +61,11 @@ export default function App() {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // কাস্টম ফিল্ড কী স্টেট
+  const [customKeys, setCustomKeys] = useState<string[]>([]);
+  const [isAddingCustomKey, setIsAddingCustomKey] = useState(false);
+  const [customKeyInput, setCustomKeyInput] = useState("");
 
   // ফর্ম স্টেট
   const [formData, setFormData] = useState<OrderField>({
@@ -71,7 +87,6 @@ export default function App() {
         const response = await fetch(GET_COMPANIES_WEBHOOK);
         if (!response.ok) throw new Error("Failed to fetch companies");
 
-        // Safely parse JSON to avoid "Unexpected end of JSON input"
         const text = await response.text();
         let data: any = null;
         try {
@@ -81,7 +96,6 @@ export default function App() {
           data = [];
         }
 
-        // Array সেফটি চেক
         if (Array.isArray(data)) {
           setCompanies(data);
         } else if (data && typeof data === "object") {
@@ -96,7 +110,7 @@ export default function App() {
     fetchCompanies();
   }, []);
 
-  // ২. ফিল্ডগুলো ফেচ করার ফাংশনকে আলাদা করা হলো (যাতে সেভ করার পরও কল করা যায়)
+  // ২. ফিল্ডগুলো ফেচ করার ফাংশনকে আলাদা করা হলো
   const fetchCompanyFields = async (companyId: string) => {
     setFetchLoading(true);
     try {
@@ -105,7 +119,6 @@ export default function App() {
       );
 
       if (response.ok) {
-        // Safely parse JSON to avoid "Unexpected end of JSON input"
         const text = await response.text();
         let data: any = [];
 
@@ -169,6 +182,8 @@ export default function App() {
       is_active: true,
     });
     setError(null);
+    setIsAddingCustomKey(false);
+    setCustomKeyInput("");
   };
 
   // অ্যাড/এডিট মোড ওপেন করা
@@ -180,10 +195,35 @@ export default function App() {
           : field.field_options || "";
 
       setFormData({ ...field, field_options: optionsStr as string });
+
+      // এডিট করার সময় যদি key ডিফল্ট লিস্টে না থাকে, তবে কাস্টম লিস্টে যোগ করে দেওয়া
+      if (
+        field.field_key &&
+        !DEFAULT_FIELD_KEYS.includes(field.field_key) &&
+        !customKeys.includes(field.field_key)
+      ) {
+        setCustomKeys((prev) => [...prev, field.field_key]);
+      }
     } else {
       resetForm();
     }
     setIsModalOpen(true);
+  };
+
+  // নতুন কাস্টম কী যোগ করার হ্যান্ডলার
+  const handleAddCustomKey = () => {
+    const newKey = customKeyInput.trim().replace(/\s+/g, "_").toLowerCase();
+    if (newKey) {
+      if (
+        !DEFAULT_FIELD_KEYS.includes(newKey) &&
+        !customKeys.includes(newKey)
+      ) {
+        setCustomKeys((prev) => [...prev, newKey]);
+      }
+      setFormData((prev) => ({ ...prev, field_key: newKey }));
+    }
+    setIsAddingCustomKey(false);
+    setCustomKeyInput("");
   };
 
   // ফর্ম সাবমিট (CREATE & UPDATE)
@@ -230,7 +270,6 @@ export default function App() {
         setSuccess("নতুন ফিল্ড সফলভাবে যোগ করা হয়েছে!");
       }
 
-      // temp- ID ব্যবহার না করে ডেটাবেস থেকে রিয়েল ডেটা ফেচ করা
       await fetchCompanyFields(selectedCompanyId);
 
       setIsModalOpen(false);
@@ -274,6 +313,8 @@ export default function App() {
       setTimeout(() => setSuccess(null), 3000);
     }
   };
+
+  const allAvailableKeys = [...DEFAULT_FIELD_KEYS, ...customKeys];
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 text-slate-800">
@@ -449,23 +490,76 @@ export default function App() {
 
               <form onSubmit={handleSubmit} className="p-6 space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Updated Field Key Input */}
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">
                       Field Key *
                     </label>
-                    <input
-                      type="text"
-                      name="field_key"
-                      value={formData.field_key}
-                      onChange={handleChange}
-                      placeholder="e.g., order_field_key"
-                      className="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm"
-                      required
-                    />
+                    {!isAddingCustomKey ? (
+                      <select
+                        name="field_key"
+                        value={formData.field_key}
+                        onChange={(e) => {
+                          if (e.target.value === "ADD_CUSTOM_KEY") {
+                            setIsAddingCustomKey(true);
+                            setCustomKeyInput("");
+                          } else {
+                            handleChange(e);
+                          }
+                        }}
+                        className="w-full border border-slate-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm bg-white"
+                        required
+                      >
+                        <option value="" disabled>
+                          -- নির্বাচন করুন --
+                        </option>
+                        {allAvailableKeys.map((key) => (
+                          <option key={key} value={key}>
+                            {key}
+                          </option>
+                        ))}
+                        <option
+                          value="ADD_CUSTOM_KEY"
+                          className="text-indigo-600 font-bold"
+                        >
+                          ➕ Add Custom Key...
+                        </option>
+                      </select>
+                    ) : (
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={customKeyInput}
+                          onChange={(e) => setCustomKeyInput(e.target.value)}
+                          placeholder="e.g., custom_field_key"
+                          className="w-full border border-indigo-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 outline-none transition-all text-sm"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          onClick={handleAddCustomKey}
+                          disabled={!customKeyInput.trim()}
+                          className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                        >
+                          Add
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsAddingCustomKey(false);
+                            setCustomKeyInput("");
+                          }}
+                          className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-2 rounded-lg text-sm transition-colors"
+                        >
+                          <X size={18} />
+                        </button>
+                      </div>
+                    )}
                     <p className="text-xs text-slate-400 mt-1">
                       ইউনিক আইডেন্টিফায়ার (স্পেস ছাড়া)
                     </p>
                   </div>
+
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">
                       Field Label *

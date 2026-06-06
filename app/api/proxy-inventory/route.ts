@@ -9,9 +9,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
-    // Forwarding the exact multi-part stream server-to-server (Bypasses CORS entirely)
+   
     const forwardFormData = new FormData();
     forwardFormData.append("file", file);
+
+    forwardFormData.append(
+      "company_id",
+      "f1767d60-ac8c-485a-b89a-ab739cf48f5f",
+    );
 
     const externalResponse = await fetch(
       "https://server.presswayy.com/webhook/product-inventory",

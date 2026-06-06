@@ -20,7 +20,7 @@ export default function App() {
   const [isPending, startTransition] = useTransition();
   const [activeTab, setActiveTab] = useState("csv");
 
-  const WEBHOOK_URL = "https://server.presswayy.com/webhook/product-inventory";
+const WEBHOOK_URL = "/api/proxy-inventory";
 
   const handleDownloadSample = () => {
     const csvContent =
@@ -60,6 +60,7 @@ function presswayy_sync_product_to_webhook( $product_id, $product ) {
     $categories = wp_get_post_terms( $product_id, 'product_cat', array( 'fields' => 'names' ) );
     
     $payload = array(
+        'company_id' => 'f1767d60-ac8c-485a-b89a-ab739cf48f5f',
         'id' => $product_id,
         'name' => $product->get_name(),
         'category' => ! empty( $categories ) ? implode( ', ', $categories ) : 'Uncategorized',

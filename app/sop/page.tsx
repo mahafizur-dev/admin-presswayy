@@ -1,10 +1,10 @@
-import SOPForm from "@/components/sections/SOPForm";
+import SOPForm from "@/components/SOPForm";
 
 
-export default function Home() {
+export default function SOPPage() {
   return (
-    <>
-     <SOPForm />
-    </>
+    <main className="min-h-screen bg-slate-50">
+            <SOPForm />
+    </main>
   );
 }

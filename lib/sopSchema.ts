@@ -1,6 +1,9 @@
 import { z } from "zod";
 
 export const sopSchema = z.object({
+  // companyId সরাসরি ফর্ম বা ইউআরএল থেকে আসতে পারে, তাই এটি UUID ভ্যালিডেশন সহ যুক্ত করা হলো
+  companyId: z.string().uuid("একটি সঠিক Company ID (UUID) প্রদান করুন"),
+
   businessName: z
     .string()
     .trim()
@@ -75,16 +78,104 @@ export const sopSchema = z.object({
     .min(2, "প্রাইসিং ফরম্যাট উল্লেখ করুন")
     .max(100, "1০০ অক্ষরের বেশি হতে পারবে না")
     .optional(),
-  returnPolicy: z.string().trim().min(2, "রিটার্ন পলিসি উল্লেখ করুন").max(100, "1০০ অক্ষরের বেশি হতে পারবে না").optional(),
-  refundPolicy: z.string().trim().min(2, "রিফান্ড পলিসি উল্লেখ করুন").max(100, "1০০ অক্ষরের বেশি হতে পারবে না").optional(),
+  returnPolicy: z
+    .string()
+    .trim()
+    .min(2, "রিটার্ন পলিসি উল্লেখ করুন")
+    .max(100, "১০০ অক্ষরের বেশি হতে পারবে না")
+    .optional(),
+  refundPolicy: z
+    .string()
+    .trim()
+    .min(2, "রিফান্ড পলিসি উল্লেখ করুন")
+    .max(100, "১০০ অক্ষরের বেশি হতে পারবে না")
+    .optional(),
   supportPhone: z.string().trim().optional(),
   websiteLink: z.string().trim().optional(),
   contactDetails: z.string().trim().optional(),
   outOfStockReply: z.string().trim().optional(),
   deliveryTimeInsideDhaka: z.string().trim(),
   deliveryTimeOutsideDhaka: z.string().trim(),
-  deliveryChargeInsideDhaka: z.string().trim(),
-  deliveryChargeOutsideDhaka: z.string().trim(),
+
+  // সংখ্যা ইনপুট ভ্যালিডেশন
+  deliveryChargeInsideDhaka: z
+    .string()
+    .regex(/^\d+$/, "শুধুমাত্র সংখ্যা লিখতে হবে"),
+  deliveryChargeOutsideDhaka: z
+    .string()
+    .regex(/^\d+$/, "শুধুমাত্র সংখ্যা লিখতে হবে"),
 });
 
 export type SOPFormData = z.infer<typeof sopSchema>;
+
+// ফর্মের ডেটা (camelCase) কে ডেটাবেসের ফরম্যাটে (snake_case) রূপান্তর করার হেল্পার ফাংশন
+export const transformSOPDataToSQL = (data: SOPFormData) => {
+  return {
+    company_id: data.companyId,
+    business_name: data.businessName,
+    business_type: data.businessType,
+    business_overview: data.businessOverview,
+    required_ai_behavior: data.requiredAiBehavior,
+    ai_name: data.aiName,
+    reply_language: data.replyLanguage,
+    use_emoji: data.useEmoji === "Yes", // String থেকে Boolean এ কনভার্ট
+    addressing_style: data.addressingStyle,
+    greeting_style: data.greetingStyle,
+    response_length: data.responseLength,
+    order_process: data.orderProcess,
+    payment_method: data.paymentMethod,
+    image_guidelines: data.imageGuidelines,
+    allow_negotiation: data.allowNegotiation === "Yes", // String থেকে Boolean এ কনভার্ট
+    negotiation_policy: data.negotiationPolicy,
+    pricing_format: data.pricingFormat,
+    return_policy: data.returnPolicy,
+    refund_policy: data.refundPolicy,
+    support_phone: data.supportPhone,
+    website_link: data.websiteLink,
+    contact_details: data.contactDetails,
+    out_of_stock_reply: data.outOfStockReply,
+    delivery_time_inside_dhaka: data.deliveryTimeInsideDhaka,
+    delivery_time_outside_dhaka: data.deliveryTimeOutsideDhaka,
+    delivery_charge_inside_dhaka: data.deliveryChargeInsideDhaka
+      ? Number(data.deliveryChargeInsideDhaka)
+      : null,
+    delivery_charge_outside_dhaka: data.deliveryChargeOutsideDhaka
+      ? Number(data.deliveryChargeOutsideDhaka)
+      : null,
+  };
+};
+
+// ডেটাবেস (SQL) থেকে আসা ডেটাকে ফর্মের ফরম্যাটে (Zod Schema) রূপান্তর করার হেল্পার ফাংশন
+export const transformSQLToSOPData = (dbData: any): SOPFormData => {
+  return {
+    companyId: dbData.company_id || "",
+    businessName: dbData.business_name || "",
+    businessType: dbData.business_type || "",
+    businessOverview: dbData.business_overview || "",
+    requiredAiBehavior: dbData.required_ai_behavior || "Friendly",
+    aiName: dbData.ai_name || "",
+    replyLanguage: dbData.reply_language || "",
+    useEmoji: dbData.use_emoji ? "Yes" : "No",
+    addressingStyle: dbData.addressing_style || "",
+    greetingStyle: dbData.greeting_style || "",
+    responseLength: dbData.response_length || "",
+    orderProcess: dbData.order_process || "",
+    paymentMethod: dbData.payment_method || "",
+    imageGuidelines: dbData.image_guidelines || "",
+    allowNegotiation: dbData.allow_negotiation ? "Yes" : "No",
+    negotiationPolicy: dbData.negotiation_policy || "No",
+    pricingFormat: dbData.pricing_format || "",
+    returnPolicy: dbData.return_policy || "",
+    refundPolicy: dbData.refund_policy || "",
+    supportPhone: dbData.support_phone || "",
+    websiteLink: dbData.website_link || "",
+    contactDetails: dbData.contact_details || "",
+    outOfStockReply: dbData.out_of_stock_reply || "",
+    deliveryTimeInsideDhaka: dbData.delivery_time_inside_dhaka || "",
+    deliveryTimeOutsideDhaka: dbData.delivery_time_outside_dhaka || "",
+    deliveryChargeInsideDhaka:
+      dbData.delivery_charge_inside_dhaka?.toString() || "", // Int to String
+    deliveryChargeOutsideDhaka:
+      dbData.delivery_charge_outside_dhaka?.toString() || "", // Int to String
+  };
+};

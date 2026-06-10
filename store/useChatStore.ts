@@ -5,6 +5,7 @@ export interface Message {
   sender: "user" | "bot";
   text: string;
   timestamp?: string;
+  images?: string[]; // user-এর পাঠানো attachment URL
 }
 
 interface ChatState {
@@ -15,13 +16,18 @@ interface ChatState {
   errorMessage: string | null;
   initSession: () => string;
   fetchHistory: (companyId: string) => Promise<void>;
-  sendMessage: (companyId: string, text: string) => Promise<void>;
+  sendMessage: (
+    companyId: string,
+    text: string,
+    attachments?: string[],
+  ) => Promise<void>;
 }
 
 const GET_URL = "https://server.presswayy.com/webhook/api/v1/get-data-chatbot";
 const POST_URL =
   "https://server.presswayy.com/webhook/api/v1/post-data-chatbot";
 const BOT_FALLBACK = "দুঃখিত, আমি এটি বুঝতে পারিনি।";
+const IMAGE_PLACEHOLDER = "(একটি ছবি পাঠানো হয়েছে)";
 
 // নিরাপদে যেকোনো shape থেকে rows[] বের করা
 function extractRows(data: any): any[] {
@@ -31,35 +37,27 @@ function extractRows(data: any): any[] {
   return [];
 }
 
-// POST রেসপন্স থেকে আসল bot reply বের করা (wrapper unwrap)
+// POST রেসপন্স থেকে আসল bot reply বের করা
 function extractReplyPayload(data: any): any {
   let payload = data;
-
-  // n8n কখনো array আকারে item পাঠায়: [{ output: ... }]
   if (Array.isArray(payload) && payload.length && payload[0]?.output != null) {
     payload = payload[0].output;
-  }
-  // object wrapper: { output | reply | response | data }
-  else if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+  } else if (
+    payload &&
+    typeof payload === "object" &&
+    !Array.isArray(payload)
+  ) {
     const unwrapped =
       payload.output ?? payload.reply ?? payload.response ?? payload.data;
     if (unwrapped !== undefined) payload = unwrapped;
   }
-
   return payload;
 }
 
-// reply কে UI-এর উপযোগী text-এ রূপান্তর
-// array/object হলে JSON string (UI সেটা parse করে text/image render করে)
 function toBotText(data: any): string {
   const payload = extractReplyPayload(data);
-
   if (payload == null) return BOT_FALLBACK;
-
-  if (typeof payload === "string") {
-    return payload.trim() || BOT_FALLBACK;
-  }
-
+  if (typeof payload === "string") return payload.trim() || BOT_FALLBACK;
   if (Array.isArray(payload) || typeof payload === "object") {
     try {
       return JSON.stringify(payload);
@@ -67,8 +65,30 @@ function toBotText(data: any): string {
       return BOT_FALLBACK;
     }
   }
-
   return String(payload);
+}
+
+// user message_text (plain বা JSON-array) থেকে text + image URL বের করা
+function parseUserContent(raw: string): { text: string; images?: string[] } {
+  const t = (raw || "").trim();
+  if (!t.startsWith("[") && !t.startsWith("{")) return { text: raw };
+  try {
+    const parsed = JSON.parse(t);
+    const arr = Array.isArray(parsed) ? parsed : [parsed];
+    let text = "";
+    const images: string[] = [];
+    for (const item of arr) {
+      // reply_type যা-ই হোক — message থাকলে text, images থাকলে ছবি
+      if (item?.message && !text) text = item.message;
+      if (Array.isArray(item?.images)) {
+        for (const im of item.images)
+          if (im?.image_url) images.push(im.image_url);
+      }
+    }
+    return { text, images: images.length ? images : undefined };
+  } catch {
+    return { text: raw };
+  }
 }
 
 const newId = () =>
@@ -85,18 +105,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   initSession: () => {
     let currentSessionId = get().sessionId;
-
     if (!currentSessionId && typeof window !== "undefined") {
       currentSessionId = localStorage.getItem("presswayy_chat_session_id");
-
       if (!currentSessionId) {
         currentSessionId = crypto.randomUUID();
         localStorage.setItem("presswayy_chat_session_id", currentSessionId);
       }
-
       set({ sessionId: currentSessionId });
     }
-
     return currentSessionId || "";
   },
 
@@ -113,14 +129,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const response = await fetch(url.toString(), { method: "GET" });
 
-      // history fail করলে UI crash করানো উচিত নয় → শুধু খালি দেখাও, throw নয়
       if (!response.ok) {
         console.warn("History load failed, status:", response.status);
         set({ messages: [] });
         return;
       }
 
-      // খালি / non-JSON রেসপন্সেও যাতে ক্র্যাশ না করে
       const raw = await response.text();
       let data: any = [];
       if (raw && raw.trim()) {
@@ -133,16 +147,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
       const formattedMessages: Message[] = extractRows(data)
         .filter((msg) => msg && (msg.message_text ?? msg.text))
-        .map((msg) => ({
-          id: msg.id ? String(msg.id) : newId(),
-          sender: msg.sender === "bot" ? "bot" : "user",
-          text: msg.message_text || msg.text || "",
-          timestamp: msg.created_at,
-        }));
+        .map((msg) => {
+          const sender = msg.sender === "bot" ? "bot" : "user";
+          const rawText = msg.message_text || msg.text || "";
+          const base = {
+            id: msg.id ? String(msg.id) : newId(),
+            sender: sender as "user" | "bot",
+            timestamp: msg.created_at,
+          };
+          // user message হলে JSON parse করে ছবি ফিরিয়ে আনি; bot হলে raw রাখি (UI parse করে)
+          if (sender === "user") {
+            const parsed = parseUserContent(rawText);
+            return { ...base, text: parsed.text, images: parsed.images };
+          }
+          return { ...base, text: rawText };
+        });
 
       set({ messages: formattedMessages });
     } catch (error: any) {
-      // নেটওয়ার্ক error হলেও page চালু থাকবে, শুধু history খালি
       console.error("Fetch Error:", error);
       set({ messages: [] });
     } finally {
@@ -150,16 +172,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
-  sendMessage: async (companyId, text) => {
+  sendMessage: async (companyId, text, attachments = []) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed && attachments.length === 0) return;
 
     const sId = get().initSession();
+
+    // DB/display-এর জন্য content: plain text, নয়তো JSON-array (text + images)
+    let saveText = trimmed;
+    if (attachments.length) {
+      const arr: any[] = [];
+      if (trimmed) arr.push({ reply_type: "text", message: trimmed });
+      arr.push({
+        reply_type: "image",
+        images: attachments.map((u) => ({ image_url: u })),
+      });
+      saveText = JSON.stringify(arr);
+    }
 
     const userMessage: Message = {
       id: newId(),
       sender: "user",
       text: trimmed,
+      images: attachments.length ? attachments : undefined,
       timestamp: new Date().toISOString(),
     };
 
@@ -173,25 +208,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const response = await fetch(POST_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companyId, sessionId: sId, message: trimmed }),
+        body: JSON.stringify({
+          companyId,
+          sessionId: sId,
+          // AI prompt: খালি না রাখতে placeholder
+          message: trimmed || IMAGE_PLACEHOLDER,
+          // DB-তে যা সেভ হবে (ছবিসহ) — workflow এটাই সেভ করবে
+          saveText,
+          // hosted image URL array (Cloudinary)
+          attachments,
+        }),
       });
 
       if (!response.ok) throw new Error("মেসেজ পাঠানো যায়নি");
 
-      const raw = await response.text();
-      let data: any = null;
-      if (raw && raw.trim()) {
+      const rawRes = await response.text();
+      let resData: any = null;
+      if (rawRes && rawRes.trim()) {
         try {
-          data = JSON.parse(raw);
+          resData = JSON.parse(rawRes);
         } catch {
-          data = raw; // plain text reply
+          resData = rawRes;
         }
       }
 
       const botReply: Message = {
         id: newId(),
         sender: "bot",
-        text: toBotText(data),
+        text: toBotText(resData),
         timestamp: new Date().toISOString(),
       };
 

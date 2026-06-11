@@ -647,7 +647,7 @@ export default function SOPForm({ companyId }: SOPFormProps) {
                 className={`${inputBase} ${okRing}`}
               />
             </div>
-            
+
             <button
               type="button"
               onClick={addCustomField}
@@ -668,12 +668,14 @@ export default function SOPForm({ companyId }: SOPFormProps) {
               Add Field
             </button>
           </div>
+          <p className="hidden mt-4 text-xs text-slate-400 sm:block">
+            Note: আপনি যত বেশি কাস্টম ফিল্ড যোগ করবেন, তত বেশি AI প্রসেসিং খরচ বৃদ্ধি
+            পাবে।
+          </p>
         </section>
 
-        <div className="mt-8 flex items-center justify-between gap-4 border-t border-slate-100 pt-5">
-          <p className="hidden text-xs text-slate-400 sm:block">
-            পরিবর্তন সেভ করার পর পাশের চ্যাটে টেস্ট করুন।
-          </p>
+        <div className="mt-8 flex items-center justify-center gap-4 border-t border-slate-100 pt-5">
+         
           <button
             type="submit"
             disabled={status === "submitting"}

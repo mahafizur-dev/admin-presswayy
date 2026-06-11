@@ -2,12 +2,16 @@
 
 import React, {
   useEffect,
+  useMemo,
   useRef,
   useState,
-  useMemo,
   useCallback,
 } from "react";
-import { useChatStore } from "../store/useChatStore";
+import { useChatStore, type Message } from "../store/useChatStore";
+import { computeDisplayCost } from "../lib/tokenCost";
+import type { RawCost } from "../lib/tokenCost";
+
+/* ----------------------------- types ----------------------------- */
 
 interface ChatbotInterfaceProps {
   companyId: string;
@@ -27,19 +31,25 @@ interface Attachment {
   name: string;
 }
 
+type ProcessedMessage = Message & { content: ReplyItem[] | string };
+
+/* --------------------------- constants --------------------------- */
+
 const MAX_ATTACHMENTS = 4;
 const MAX_FILE_MB = 10;
-
 const CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || "";
 const UPLOAD_PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "";
 
-/* ---------- helpers ---------- */
+/* ----------------------------- helpers --------------------------- */
+
+const localId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 function formatTime(ts?: string): string {
   if (!ts) return "";
   const d = new Date(ts);
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return isNaN(d.getTime())
+    ? ""
+    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function parseBotContent(text: string): ReplyItem[] | string {
@@ -80,24 +90,120 @@ async function uploadToCloudinary(file: File): Promise<string> {
   return data.secure_url as string;
 }
 
-/* ---------- atoms (compact) ---------- */
+/* ------------------------------ hooks ---------------------------- */
+
+function useAttachments() {
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const update = (id: string, patch: Partial<Attachment>) =>
+    setAttachments((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+    );
+
+  const remove = (id: string) =>
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+
+  const clear = () => setAttachments([]);
+
+  const addFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const slots = Math.max(0, MAX_ATTACHMENTS - attachments.length);
+    const picked = Array.from(files).slice(0, slots);
+
+    for (const file of picked) {
+      if (!file.type.startsWith("image/")) continue;
+      if (file.size > MAX_FILE_MB * 1024 * 1024) continue;
+
+      const id = localId();
+      let preview = "";
+      try {
+        preview = await readFileAsDataURL(file);
+      } catch {
+        /* ignore preview failure */
+      }
+
+      setAttachments((prev) => [
+        ...prev,
+        { id, preview, status: "uploading", name: file.name },
+      ]);
+
+      uploadToCloudinary(file)
+        .then((url) => update(id, { url, status: "done" }))
+        .catch((err) => {
+          console.error("Upload error:", err);
+          update(id, { status: "error" });
+        });
+    }
+
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const uploading = attachments.some((a) => a.status === "uploading");
+  const readyUrls = attachments
+    .filter((a) => a.status === "done" && a.url)
+    .map((a) => a.url as string);
+
+  return {
+    attachments,
+    fileInputRef,
+    addFiles,
+    remove,
+    clear,
+    uploading,
+    readyUrls,
+  };
+}
+
+function useAutoScroll(trigger: number, isSending: boolean) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    bottomRef.current?.scrollIntoView({ behavior });
+    setShowJump(false);
+  }, []);
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    nearBottomRef.current = distance < 120;
+    if (nearBottomRef.current) setShowJump(false);
+  };
+
+  useEffect(() => {
+    if (nearBottomRef.current) scrollToBottom(trigger <= 1 ? "auto" : "smooth");
+    else setShowJump(true);
+  }, [trigger, isSending, scrollToBottom]);
+
+  return {
+    scrollRef,
+    bottomRef,
+    nearBottomRef,
+    showJump,
+    scrollToBottom,
+    onScroll,
+  };
+}
+
+/* ---------------------------- atoms ------------------------------ */
 
 function BotAvatar() {
   return (
-    <div className="h-6 w-6 shrink-0 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white shadow-sm">
+    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
       <svg
         viewBox="0 0 24 24"
-        className="h-3 w-3"
+        className="h-3.5 w-3.5"
         fill="none"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
       >
-        <rect x="3" y="8" width="18" height="12" rx="3" />
-        <path d="M12 8V4M8 2h8" />
-        <circle cx="9" cy="14" r="1" fill="currentColor" />
-        <circle cx="15" cy="14" r="1" fill="currentColor" />
+        <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
       </svg>
     </div>
   );
@@ -105,10 +211,10 @@ function BotAvatar() {
 
 function UserAvatar() {
   return (
-    <div className="h-6 w-6 shrink-0 rounded-full bg-slate-300 flex items-center justify-center text-slate-600 shadow-sm">
+    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-500">
       <svg
         viewBox="0 0 24 24"
-        className="h-3 w-3"
+        className="h-3.5 w-3.5"
         fill="none"
         stroke="currentColor"
         strokeWidth="2"
@@ -122,11 +228,14 @@ function UserAvatar() {
   );
 }
 
+const Avatar = ({ sender }: { sender: "user" | "bot" }) =>
+  sender === "bot" ? <BotAvatar /> : <UserAvatar />;
+
 function SentTicks() {
   return (
     <svg
       viewBox="0 0 18 12"
-      className="h-2.5 w-3.5 text-indigo-200"
+      className="h-2.5 w-3.5 text-emerald-200"
       fill="none"
       stroke="currentColor"
       strokeWidth="1.6"
@@ -139,6 +248,19 @@ function SentTicks() {
   );
 }
 
+function TokenCostBadge({ cost }: { cost?: RawCost }) {
+  const display = computeDisplayCost(cost);
+  if (!display?.visible) return null;
+  return (
+    <span
+      className="rounded-full bg-emerald-50 px-1.5 py-0.5 font-mono text-[9px] font-medium text-emerald-700"
+      title="এই reply-এর আনুমানিক খরচ"
+    >
+      {display.formatted}
+    </span>
+  );
+}
+
 function ChatImage({
   src,
   onOpen,
@@ -148,7 +270,13 @@ function ChatImage({
 }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
-  if (failed) return null;
+  if (failed) {
+    return (
+      <div className="flex h-24 w-full items-center justify-center rounded-lg bg-slate-100 text-[10px] text-slate-400">
+        ছবি লোড হয়নি
+      </div>
+    );
+  }
   return (
     <div className="relative overflow-hidden rounded-lg">
       {!loaded && (
@@ -161,22 +289,316 @@ function ChatImage({
         onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
         onClick={() => onOpen(src)}
-        className={`max-h-44 w-full cursor-zoom-in object-cover transition-opacity duration-300 ${
-          loaded ? "opacity-100" : "opacity-0"
-        }`}
+        className={`max-h-44 w-full cursor-zoom-in object-cover transition-opacity duration-300 ${loaded ? "opacity-100" : "opacity-0"}`}
         style={{ minHeight: loaded ? undefined : 96 }}
       />
     </div>
   );
 }
 
-/* ---------- main ---------- */
+/* --------------------------- message ----------------------------- */
+
+function MessageBody({
+  msg,
+  onOpenImage,
+}: {
+  msg: ProcessedMessage;
+  onOpenImage: (s: string) => void;
+}) {
+  if (msg.sender === "user") {
+    return msg.text ? (
+      <p className="whitespace-pre-wrap break-words leading-snug">{msg.text}</p>
+    ) : null;
+  }
+  if (Array.isArray(msg.content)) {
+    return (
+      <div className="space-y-1.5">
+        {msg.content.map((item, idx) => (
+          <div key={idx} className="space-y-1.5">
+            {item.message && (
+              <p className="whitespace-pre-wrap break-words leading-snug">
+                {item.message}
+              </p>
+            )}
+            {Array.isArray(item.images) &&
+              item.images.map(
+                (img, i) =>
+                  img?.image_url && (
+                    <ChatImage
+                      key={i}
+                      src={img.image_url}
+                      onOpen={onOpenImage}
+                    />
+                  ),
+              )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <p className="whitespace-pre-wrap break-words leading-snug">
+      {msg.content}
+    </p>
+  );
+}
+
+function MessageBubble({
+  msg,
+  onOpenImage,
+}: {
+  msg: ProcessedMessage;
+  onOpenImage: (s: string) => void;
+}) {
+  const isUser = msg.sender === "user";
+  return (
+    <div
+      className={`flex items-end gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
+    >
+      <Avatar sender={msg.sender} />
+      <div
+        className={`relative max-w-[78%] rounded-2xl px-3 py-2 text-[13px] ${
+          isUser
+            ? "rounded-br-md bg-emerald-600 text-white"
+            : "rounded-bl-md border border-slate-200 bg-white text-slate-800"
+        }`}
+      >
+        {isUser && msg.images && msg.images.length > 0 && (
+          <div className="mb-1.5 grid grid-cols-2 gap-1">
+            {msg.images.map((src, i) => (
+              <ChatImage key={i} src={src} onOpen={onOpenImage} />
+            ))}
+          </div>
+        )}
+
+        <MessageBody msg={msg} onOpenImage={onOpenImage} />
+
+        <div
+          className={`mt-1 flex items-center justify-end gap-1.5 ${
+            isUser ? "text-emerald-100" : "text-slate-400"
+          }`}
+        >
+          {!isUser && <TokenCostBadge cost={msg.cost} />}
+          <span className="text-[9px]">{formatTime(msg.timestamp)}</span>
+          {isUser && <SentTicks />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TypingIndicator() {
+  return (
+    <div className="flex items-end gap-2">
+      <BotAvatar />
+      <div className="flex items-center gap-1 rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3 py-2.5">
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.15s]" />
+        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.3s]" />
+      </div>
+    </div>
+  );
+}
+
+const LoadingState = () => (
+  <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-400">
+    <div className="h-5 w-5 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+    <p className="text-xs">লোড হচ্ছে...</p>
+  </div>
+);
+
+const EmptyState = () => (
+  <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50">
+      <BotAvatar />
+    </div>
+    <div className="space-y-0.5">
+      <p className="text-sm font-medium text-slate-700">নতুন চ্যাট শুরু করুন</p>
+      <p className="text-xs text-slate-400">যেকোনো প্রশ্ন বা ছবি পাঠান 👋</p>
+    </div>
+  </div>
+);
+
+/* ------------------------- attachments --------------------------- */
+
+function AttachmentPreview({
+  items,
+  onRemove,
+}: {
+  items: Attachment[];
+  onRemove: (id: string) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="flex gap-2 overflow-x-auto border-t border-slate-100 bg-slate-50 px-3 py-2">
+      {items.map((a) => (
+        <div key={a.id} className="relative shrink-0">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={a.preview || a.url}
+            alt={a.name}
+            className={`h-12 w-12 rounded-lg border border-slate-200 object-cover ${a.status !== "done" ? "opacity-60" : ""}`}
+          />
+          {a.status === "uploading" && (
+            <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/30">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+            </div>
+          )}
+          {a.status === "error" && (
+            <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-red-500/40 text-[9px] font-bold text-white">
+              ত্রুটি
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => onRemove(a.id)}
+            className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-700 text-white transition hover:bg-slate-900"
+            aria-label="সরান"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="h-2.5 w-2.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+    >
+      <button
+        onClick={onClose}
+        className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+        aria-label="বন্ধ করুন"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="h-6 w-6"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt="preview"
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[90vh] max-w-full rounded-lg object-contain shadow-2xl"
+      />
+    </div>
+  );
+}
+
+/* --------------------------- composer ---------------------------- */
+
+function Composer({
+  inputMessage,
+  setInputMessage,
+  uploading,
+  canSend,
+  attachmentCount,
+  fileInputRef,
+  onPickFiles,
+  onSubmit,
+}: {
+  inputMessage: string;
+  setInputMessage: (v: string) => void;
+  uploading: boolean;
+  canSend: boolean;
+  attachmentCount: number;
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  onPickFiles: (files: FileList | null) => void;
+  onSubmit: (e: React.FormEvent) => void;
+}) {
+  return (
+    <form
+      onSubmit={onSubmit}
+      className="flex items-center gap-2 border-t border-slate-100 bg-white p-2.5"
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => onPickFiles(e.target.files)}
+      />
+
+      <button
+        type="button"
+        onClick={() => fileInputRef.current?.click()}
+        disabled={attachmentCount >= MAX_ATTACHMENTS}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
+        aria-label="ছবি যোগ করুন"
+        title="ছবি যোগ করুন"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="h-[18px] w-[18px]"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+        </svg>
+      </button>
+
+      <input
+        type="text"
+        value={inputMessage}
+        onChange={(e) => setInputMessage(e.target.value)}
+        placeholder={uploading ? "আপলোড হচ্ছে..." : "মেসেজ লিখুন..."}
+        className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-2.5 text-[13px] text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-100"
+      />
+
+      <button
+        type="submit"
+        disabled={!canSend}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+        aria-label="পাঠান"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="h-[18px] w-[18px]"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="m22 2-7 20-4-9-9-4Z" />
+          <path d="M22 2 11 13" />
+        </svg>
+      </button>
+    </form>
+  );
+}
+
+/* ----------------------------- main ------------------------------ */
 
 export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
   const [inputMessage, setInputMessage] = useState("");
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [lightbox, setLightbox] = useState<string | null>(null);
-  const [showJump, setShowJump] = useState(false);
 
   const {
     messages,
@@ -189,10 +611,23 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
     sendMessage,
   } = useChatStore();
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const nearBottomRef = useRef(true);
+  const {
+    attachments,
+    fileInputRef,
+    addFiles,
+    remove,
+    clear,
+    uploading,
+    readyUrls,
+  } = useAttachments();
+  const {
+    scrollRef,
+    bottomRef,
+    nearBottomRef,
+    showJump,
+    scrollToBottom,
+    onScroll,
+  } = useAutoScroll(messages.length, isSending);
 
   useEffect(() => {
     if (companyId) {
@@ -201,28 +636,7 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
     }
   }, [companyId, initSession, fetchHistory]);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    bottomRef.current?.scrollIntoView({ behavior });
-    setShowJump(false);
-  }, []);
-
-  useEffect(() => {
-    if (nearBottomRef.current) {
-      scrollToBottom(messages.length <= 1 ? "auto" : "smooth");
-    } else {
-      setShowJump(true);
-    }
-  }, [messages, isSending, scrollToBottom]);
-
-  const handleScroll = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    nearBottomRef.current = distance < 120;
-    if (nearBottomRef.current) setShowJump(false);
-  };
-
-  const processedMessages = useMemo(
+  const processedMessages: ProcessedMessage[] = useMemo(
     () =>
       messages.map((msg) => ({
         ...msg,
@@ -230,54 +644,6 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
       })),
     [messages],
   );
-
-  /* ----- attachment handlers ----- */
-
-  const updateAttachment = (id: string, patch: Partial<Attachment>) =>
-    setAttachments((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, ...patch } : a)),
-    );
-
-  const handleFiles = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const slots = MAX_ATTACHMENTS - attachments.length;
-    const picked = Array.from(files).slice(0, Math.max(0, slots));
-
-    for (const file of picked) {
-      if (!file.type.startsWith("image/")) continue;
-      if (file.size > MAX_FILE_MB * 1024 * 1024) continue;
-
-      const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      let preview = "";
-      try {
-        preview = await readFileAsDataURL(file);
-      } catch {
-        /* ignore */
-      }
-
-      setAttachments((prev) => [
-        ...prev,
-        { id, preview, status: "uploading", name: file.name },
-      ]);
-
-      uploadToCloudinary(file)
-        .then((url) => updateAttachment(id, { url, status: "done" }))
-        .catch((err) => {
-          console.error("Upload error:", err);
-          updateAttachment(id, { status: "error" });
-        });
-    }
-
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  const removeAttachment = (id: string) =>
-    setAttachments((prev) => prev.filter((a) => a.id !== id));
-
-  const uploading = attachments.some((a) => a.status === "uploading");
-  const readyUrls = attachments
-    .filter((a) => a.status === "done" && a.url)
-    .map((a) => a.url as string);
 
   const canSend =
     (inputMessage.trim().length > 0 || readyUrls.length > 0) &&
@@ -290,27 +656,27 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
     const textToSend = inputMessage;
     const urls = readyUrls;
     setInputMessage("");
-    setAttachments([]);
+    clear();
     nearBottomRef.current = true;
     await sendMessage(companyId, textToSend, urls);
   };
 
   return (
-    <div className="flex h-[62vh] max-h-[520px] w-full max-w-md mx-auto flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg sm:h-[520px]">
+    <div className="flex h-[62vh] max-h-[540px] w-full max-w-md mx-auto flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:h-[540px]">
       {/* Header */}
-      <header className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-violet-600 px-3 py-2">
-        <BotAvatar />
+      <header className="flex items-center gap-2.5 border-b border-slate-100 bg-white px-3.5 py-3">
+        <div className="relative">
+          <BotAvatar />
+          <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500" />
+        </div>
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-semibold leading-tight text-white">
-            AI Assistant
+          <h3 className="truncate text-sm font-semibold leading-tight text-slate-800">
+            Presswayy AI
           </h3>
-          <div className="flex items-center gap-1">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-            <span className="text-[10px] text-indigo-100">Online</span>
-          </div>
+          <span className="text-[11px] text-emerald-600">Online</span>
         </div>
         {sessionId && (
-          <span className="rounded-full bg-white/10 px-1.5 py-0.5 font-mono text-[9px] text-indigo-100">
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[9px] text-slate-400">
             #{sessionId.slice(0, 6)}
           </span>
         )}
@@ -319,116 +685,19 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
       {/* Messages */}
       <div
         ref={scrollRef}
-        onScroll={handleScroll}
-        className="relative flex-1 overflow-y-auto px-2.5 py-3"
-        style={{
-          backgroundColor: "#ece5dd",
-          backgroundImage:
-            "radial-gradient(rgba(0,0,0,0.035) 1px, transparent 1px)",
-          backgroundSize: "16px 16px",
-        }}
+        onScroll={onScroll}
+        className="relative flex-1 overflow-y-auto bg-slate-50 px-3 py-3.5"
       >
         {isFetching ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-500">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
-            <p className="text-xs">লোড হচ্ছে...</p>
-          </div>
+          <LoadingState />
         ) : processedMessages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-            <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white/70 shadow-sm">
-              <BotAvatar />
-            </div>
-            <p className="text-xs text-slate-500">নতুন চ্যাট শুরু করুন 👋</p>
-          </div>
+          <EmptyState />
         ) : (
-          <div className="space-y-2">
-            {processedMessages.map((msg) => {
-              const isUser = msg.sender === "user";
-              return (
-                <div
-                  key={msg.id}
-                  className={`flex items-end gap-1.5 ${
-                    isUser ? "flex-row-reverse" : "flex-row"
-                  }`}
-                >
-                  {isUser ? <UserAvatar /> : <BotAvatar />}
-
-                  <div
-                    className={`group relative max-w-[80%] rounded-2xl px-2.5 py-1.5 text-[13px] shadow-sm ${
-                      isUser
-                        ? "rounded-br-sm bg-indigo-600 text-white"
-                        : "rounded-bl-sm bg-white text-slate-800"
-                    }`}
-                  >
-                    {isUser && msg.images && msg.images.length > 0 && (
-                      <div className="mb-1 grid grid-cols-2 gap-1">
-                        {msg.images.map((src, i) => (
-                          <ChatImage key={i} src={src} onOpen={setLightbox} />
-                        ))}
-                      </div>
-                    )}
-
-                    {isUser ? (
-                      msg.text ? (
-                        <p className="whitespace-pre-wrap break-words leading-snug">
-                          {msg.text}
-                        </p>
-                      ) : null
-                    ) : Array.isArray(msg.content) ? (
-                      <div className="space-y-1.5">
-                        {msg.content.map((item, idx) => (
-                          <div key={idx} className="space-y-1.5">
-                            {item.message && (
-                              <p className="whitespace-pre-wrap break-words leading-snug">
-                                {item.message}
-                              </p>
-                            )}
-                            {Array.isArray(item.images) &&
-                              item.images.map(
-                                (img, i) =>
-                                  img?.image_url && (
-                                    <ChatImage
-                                      key={i}
-                                      src={img.image_url}
-                                      onOpen={setLightbox}
-                                    />
-                                  ),
-                              )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="whitespace-pre-wrap break-words leading-snug">
-                        {msg.content}
-                      </p>
-                    )}
-
-                    <div
-                      className={`mt-0.5 flex items-center justify-end gap-1 ${
-                        isUser ? "text-indigo-200" : "text-slate-400"
-                      }`}
-                    >
-                      <span className="text-[9px]">
-                        {formatTime(msg.timestamp)}
-                      </span>
-                      {isUser && <SentTicks />}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-
-            {isSending && (
-              <div className="flex items-end gap-1.5">
-                <BotAvatar />
-                <div className="flex items-center gap-1 rounded-2xl rounded-bl-sm bg-white px-3 py-2 shadow-sm">
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" />
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.15s]" />
-                  <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.3s]" />
-                </div>
-              </div>
-            )}
-
+          <div className="space-y-2.5">
+            {processedMessages.map((msg) => (
+              <MessageBubble key={msg.id} msg={msg} onOpenImage={setLightbox} />
+            ))}
+            {isSending && <TypingIndicator />}
             <div ref={bottomRef} />
           </div>
         )}
@@ -436,7 +705,7 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
         {showJump && (
           <button
             onClick={() => scrollToBottom()}
-            className="sticky bottom-2 left-full ml-auto flex h-8 w-8 items-center justify-center rounded-full bg-white text-indigo-600 shadow-lg ring-1 ring-slate-200 transition hover:bg-indigo-50"
+            className="sticky bottom-2 left-full ml-auto flex h-9 w-9 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg transition hover:bg-emerald-700"
             aria-label="নতুন মেসেজে যান"
           >
             <svg
@@ -444,7 +713,7 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
               className="h-4 w-4"
               fill="none"
               stroke="currentColor"
-              strokeWidth="2"
+              strokeWidth="2.2"
               strokeLinecap="round"
               strokeLinejoin="round"
             >
@@ -455,152 +724,26 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
       </div>
 
       {errorMessage && (
-        <div className="bg-red-50 px-3 py-1.5 text-center text-[11px] text-red-600">
+        <div className="border-t border-red-100 bg-red-50 px-3 py-1.5 text-center text-[11px] text-red-600">
           {errorMessage}
         </div>
       )}
 
-      {/* attachment preview row */}
-      {attachments.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto border-t border-slate-100 bg-slate-50 px-2.5 py-1.5">
-          {attachments.map((a) => (
-            <div key={a.id} className="relative shrink-0">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={a.preview || a.url}
-                alt={a.name}
-                className={`h-12 w-12 rounded-md border border-slate-200 object-cover ${
-                  a.status !== "done" ? "opacity-60" : ""
-                }`}
-              />
-              {a.status === "uploading" && (
-                <div className="absolute inset-0 flex items-center justify-center rounded-md bg-black/30">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                </div>
-              )}
-              {a.status === "error" && (
-                <div className="absolute inset-0 flex items-center justify-center rounded-md bg-red-500/40 text-[9px] font-bold text-white">
-                  ত্রুটি
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => removeAttachment(a.id)}
-                className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-700 text-white shadow hover:bg-slate-900"
-                aria-label="সরান"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-2.5 w-2.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <AttachmentPreview items={attachments} onRemove={remove} />
 
-      {/* Composer */}
-      <form
+      <Composer
+        inputMessage={inputMessage}
+        setInputMessage={setInputMessage}
+        uploading={uploading}
+        canSend={canSend}
+        attachmentCount={attachments.length}
+        fileInputRef={fileInputRef}
+        onPickFiles={addFiles}
         onSubmit={handleSend}
-        className="flex items-center gap-1.5 border-t border-slate-200 bg-white p-2"
-      >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={(e) => handleFiles(e.target.files)}
-        />
+      />
 
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={attachments.length >= MAX_ATTACHMENTS}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-40"
-          aria-label="ছবি যোগ করুন"
-          title="ছবি যোগ করুন"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            className="h-[18px] w-[18px]"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-          </svg>
-        </button>
-
-        <input
-          type="text"
-          value={inputMessage}
-          onChange={(e) => setInputMessage(e.target.value)}
-          placeholder={uploading ? "আপলোড হচ্ছে..." : "মেসেজ লিখুন..."}
-          className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-3.5 py-2 text-[13px] outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100"
-        />
-
-        <button
-          type="submit"
-          disabled={!canSend}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white shadow-md transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
-          aria-label="পাঠান"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            className="h-[18px] w-[18px]"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="m22 2-7 20-4-9-9-4Z" />
-            <path d="M22 2 11 13" />
-          </svg>
-        </button>
-      </form>
-
-      {/* Lightbox */}
       {lightbox && (
-        <div
-          onClick={() => setLightbox(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
-        >
-          <button
-            onClick={() => setLightbox(null)}
-            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
-            aria-label="বন্ধ করুন"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              className="h-6 w-6"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M18 6 6 18M6 6l12 12" />
-            </svg>
-          </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={lightbox}
-            alt="preview"
-            onClick={(e) => e.stopPropagation()}
-            className="max-h-[90vh] max-w-full rounded-lg object-contain shadow-2xl"
-          />
-        </div>
+        <Lightbox src={lightbox} onClose={() => setLightbox(null)} />
       )}
     </div>
   );

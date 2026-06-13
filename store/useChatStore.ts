@@ -17,6 +17,7 @@ interface ChatState {
   sessionId: string | null;
   isFetching: boolean;
   isSending: boolean;
+  isDeleting: boolean;
   errorMessage: string | null;
   initSession: () => string;
   fetchHistory: (companyId: string) => Promise<void>;
@@ -25,6 +26,7 @@ interface ChatState {
     text: string,
     attachments?: string[],
   ) => Promise<void>;
+  clearChats: (companyId: string) => Promise<void>;
 }
 
 /* --------------------------- constants --------------------------- */
@@ -32,6 +34,7 @@ interface ChatState {
 const API = {
   GET: "https://server.presswayy.com/webhook/api/v1/get-data-chatbot",
   POST: "https://server.presswayy.com/webhook/api/v1/post-data-chatbot",
+  DELETE: "https://server.presswayy.com/webhook/api/v1/delete-data-chatbot",
 } as const;
 
 const SESSION_KEY = "presswayy_chat_session_id";
@@ -200,6 +203,19 @@ async function apiSendMessage(
   return safeJsonParse<unknown>(await res.text(), null);
 }
 
+// এই session/company-র সব চ্যাট সার্ভার থেকে স্থায়ীভাবে মুছে ফেলা
+async function apiDeleteHistory(
+  companyId: string,
+  sessionId: string,
+): Promise<void> {
+  const res = await fetch(API.DELETE, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ companyId, sessionId }),
+  });
+  if (!res.ok) throw new Error(`চ্যাট মুছে ফেলা যায়নি: ${res.status}`);
+}
+
 /* ----------------------------- store ----------------------------- */
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -207,6 +223,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sessionId: null,
   isFetching: false,
   isSending: false,
+  isDeleting: false,
   errorMessage: null,
 
   initSession: () => {
@@ -282,6 +299,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
     } finally {
       set({ isSending: false });
+    }
+  },
+
+  clearChats: async (companyId) => {
+    const sId = get().initSession();
+    if (!sId || !companyId) return;
+    if (get().isDeleting) return; // ডাবল-ক্লিক প্রতিরোধ
+
+    set({ isDeleting: true, errorMessage: null });
+    try {
+      await apiDeleteHistory(companyId, sId);
+      // সার্ভারে মুছে যাওয়ার পর local state-ও খালি করা
+      set({ messages: [] });
+    } catch (error) {
+      console.error("Delete Error:", error);
+      set({
+        errorMessage:
+          error instanceof Error
+            ? error.message
+            : "চ্যাট মুছে ফেলা ব্যর্থ হয়েছে",
+      });
+    } finally {
+      set({ isDeleting: false });
     }
   },
 }));

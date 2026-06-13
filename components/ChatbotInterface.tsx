@@ -231,6 +231,26 @@ function UserAvatar() {
 const Avatar = ({ sender }: { sender: "user" | "bot" }) =>
   sender === "bot" ? <BotAvatar /> : <UserAvatar />;
 
+function TrashIcon({
+  className = "h-[18px] w-[18px]",
+}: {
+  className?: string;
+}) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6" />
+    </svg>
+  );
+}
+
 function SentTicks() {
   return (
     <svg
@@ -364,7 +384,11 @@ function MessageBubble({
         }`}
       >
         {isUser && msg.images && msg.images.length > 0 && (
-          <div className="mb-1.5 grid grid-cols-2 gap-1">
+          <div
+            className={`mb-1.5 grid gap-1 ${
+              msg.images.length === 1 ? "w-44 grid-cols-1" : "w-56 grid-cols-2"
+            }`}
+          >
             {msg.images.map((src, i) => (
               <ChatImage key={i} src={src} onOpen={onOpenImage} />
             ))}
@@ -418,6 +442,75 @@ const EmptyState = () => (
     </div>
   </div>
 );
+
+/* ----------------------- confirm dialog -------------------------- */
+
+function ConfirmDialog({
+  open,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      onClick={busy ? undefined : onCancel}
+      className="absolute inset-0 z-40 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-[300px] overflow-hidden rounded-2xl bg-white shadow-xl"
+      >
+        <div className="flex flex-col items-center gap-3 px-5 pt-5 text-center">
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-red-50 text-red-600">
+            <TrashIcon className="h-5 w-5" />
+          </div>
+          <div className="space-y-1">
+            <h4 className="text-sm font-semibold text-slate-800">
+              সব চ্যাট মুছে ফেলবেন?
+            </h4>
+            <p className="text-xs leading-relaxed text-slate-500">
+              এই সেশনের সব মেসেজ ও কথোপকথন স্থায়ীভাবে মুছে যাবে। এটি ফেরানো
+              যাবে না।
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 flex gap-2 border-t border-slate-100 p-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+          >
+            বাতিল
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-red-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-red-300"
+          >
+            {busy ? (
+              <>
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                মুছছি...
+              </>
+            ) : (
+              "মুছে ফেলুন"
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* ------------------------- attachments --------------------------- */
 
@@ -599,16 +692,19 @@ function Composer({
 export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
   const [inputMessage, setInputMessage] = useState("");
   const [lightbox, setLightbox] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const {
     messages,
     sessionId,
     isFetching,
     isSending,
+    isDeleting,
     errorMessage,
     initSession,
     fetchHistory,
     sendMessage,
+    clearChats,
   } = useChatStore();
 
   const {
@@ -650,6 +746,9 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
     !isSending &&
     !uploading;
 
+  const hasMessages = messages.length > 0;
+  const canDelete = hasMessages && !isDeleting && !isSending && !isFetching;
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSend) return;
@@ -661,8 +760,13 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
     await sendMessage(companyId, textToSend, urls);
   };
 
+  const handleConfirmDelete = async () => {
+    await clearChats(companyId);
+    setConfirmOpen(false);
+  };
+
   return (
-    <div className="flex h-[62vh] max-h-[540px] w-full max-w-md mx-auto flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:h-[540px]">
+    <div className="relative flex h-[62vh] max-h-[540px] w-full max-w-md mx-auto flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:h-[540px]">
       {/* Header */}
       <header className="flex items-center gap-2.5 border-b border-slate-100 bg-white px-3.5 py-3">
         <div className="relative">
@@ -675,11 +779,20 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
           </h3>
           <span className="text-[11px] text-emerald-600">Online</span>
         </div>
-        {sessionId && (
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[9px] text-slate-400">
-            #{sessionId.slice(0, 6)}
-          </span>
-        )}
+
+        {/* Clear chat */}
+        <button
+          type="button"
+          onClick={() => setConfirmOpen(true)}
+          disabled={!canDelete}
+          className="flex shrink-0 items-center gap-1 rounded-full border border-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-slate-200 disabled:hover:bg-transparent disabled:hover:text-slate-500"
+          aria-label="Clear chat"
+          title="Clear chat"
+        >
+          Clear chat
+        </button>
+
+        
       </header>
 
       {/* Messages */}
@@ -740,6 +853,13 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
         fileInputRef={fileInputRef}
         onPickFiles={addFiles}
         onSubmit={handleSend}
+      />
+
+      <ConfirmDialog
+        open={confirmOpen}
+        busy={isDeleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setConfirmOpen(false)}
       />
 
       {lightbox && (

@@ -9,7 +9,6 @@ import {
   FileSpreadsheet,
   Download,
   X,
-  RotateCcw,
 } from "lucide-react";
 
 /* --------------------------- constants --------------------------- */
@@ -20,9 +19,9 @@ const MAX_FILE_MB = 10;
 type Status = "idle" | "uploading" | "success" | "error";
 
 const SAMPLE_CSV =
-  "id,name,category,regular_price,offer_price,inventory_quantity,size,color,product_type,size_chart_image_url\n" +
-  "101,Panjabi Semi Fit,Panjabi,2790,1950,100000,3B,Deep ash,3287#1,https://res.cloudinary.com/drchxbdit/image/upload/v1776054103/size_chart_panjabi_tmeusj.webp\n" +
-  "102,Premium Shirt,Clothing,1500,1200,500,L,Blue,Casual,https://example.com/shirt-chart.png";
+  "unique_product_id,product_name,category,description,size,color,regular_price,offer_price,image_url,inventory_quantity\n" +
+  "101,Panjabi Semi Fit,Panjabi,There Might Be Slight Variation In The Actual Color Of The Georgette Long Dress Due To Different Screen Resolutions,42,Deep Ash,2790,1950,https://creatorbd.shop/wp-content/uploads/2026/04/32871-2790.jpg,100\n" +
+  "102,Jorjet Shalwar Kameez,Three Piece,There Might Be Slight Variation In The Actual Color Of The Georgette Long Dress Due To Different Screen Resolutions,38,Black,800,600,https://res.cloudinary.com/drchxbdit/image/upload/v1778478792/Embodary_Three-Piece_Salwar_Kameez_for_5_dn3gmo.jpg,100\n";
 
 /* ----------------------------- helpers --------------------------- */
 
@@ -45,6 +44,14 @@ function downloadFile(content: string, filename: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
+function parseCsv(csv: string): { headers: string[]; rows: string[][] } {
+  const [headerLine, ...dataLines] = csv.split("\n");
+  return {
+    headers: headerLine.split(","),
+    rows: dataLines.map((line) => line.split(",")),
+  };
+}
+
 /* ------------------------------ atoms ---------------------------- */
 
 function StepBadge({ n }: { n: number }) {
@@ -59,7 +66,7 @@ function StepBadge({ n }: { n: number }) {
 
 interface InventoryUploadProps {
   companyId?: string;
-  embedded?: boolean; // form/page-এর ভেতরে বসালে full-screen wrapper বাদ যায়
+  embedded?: boolean;
 }
 
 export default function InventoryUpload({
@@ -75,6 +82,7 @@ export default function InventoryUpload({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const isUploading = status === "uploading";
+  const { headers, rows } = parseCsv(SAMPLE_CSV);
 
   const reset = () => {
     setFile(null);
@@ -179,26 +187,62 @@ export default function InventoryUpload({
       <section className="space-y-2.5">
         <div className="flex items-center gap-2">
           <StepBadge n={1} />
-          <h3 className="text-sm font-semibold text-slate-700">টেমপ্লেট নিন</h3>
+          <h3 className="text-sm font-semibold text-slate-700">
+            প্রোডাক্ট টেমপ্লেট ফলো করুন
+          </h3>
         </div>
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3.5">
-          <p className="text-xs text-emerald-800/90">
-            স্ট্যান্ডার্ড ফরম্যাটে ডাটা সাজাতে নমুনা CSV ডাউনলোড করুন।
-          </p>
-          <button
-            type="button"
-            onClick={() =>
-              downloadFile(
-                SAMPLE_CSV,
-                "product_inventory_sample.csv",
-                "text/csv;charset=utf-8;",
-              )
-            }
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-50"
-          >
-            <Download className="h-3.5 w-3.5" />
-            টেমপ্লেট
-          </button>
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50 overflow-hidden">
+          <div className="overflow-x-auto max-h-36">
+            <table className="min-w-full text-[11px]">
+              <thead>
+                <tr className="bg-emerald-100 sticky top-0">
+                  {headers.map((col) => (
+                    <th
+                      key={col}
+                      className="whitespace-nowrap px-3 py-2 text-left font-bold text-emerald-800"
+                    >
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, i) => (
+                  <tr key={i} className="border-t border-emerald-100">
+                    {row.map((cell, j) => (
+                      <td
+                        key={j}
+                        className="whitespace-nowrap px-3 py-1.5 text-emerald-900/80"
+                      >
+                        {cell}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between gap-3 border-t border-emerald-100 px-3.5 py-2.5">
+            <p className="text-xs text-emerald-800/80">
+              এই ফরম্যাটে আপনার CSV ফাইলটি সাজান। প্রয়োজনে অতিরিক্ত (Extra) কলাম
+              যোগ করতে পারেন, তবে সেগুলো অবশ্যই `Inventory Quantity` কলামের পরে
+              যুক্ত করতে হবে।
+            </p>
+            <button
+              type="button"
+              onClick={() =>
+                downloadFile(
+                  SAMPLE_CSV,
+                  "product_inventory_sample.csv",
+                  "text/csv;charset=utf-8;",
+                )
+              }
+              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-50"
+            >
+              <Download className="h-3.5 w-3.5" />
+              ডাউনলোড
+            </button>
+          </div>
         </div>
       </section>
 
@@ -296,17 +340,14 @@ export default function InventoryUpload({
       )}
 
       {status === "success" && (
-        <div className="space-y-3">
-          <div className="flex gap-3 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-emerald-800">
-            <CheckCircle2 className="h-5 w-5 shrink-0" />
-            <div className="text-xs">
-              <p className="font-bold">সফলভাবে সম্পন্ন হয়েছে!</p>
-              <p className="opacity-80">
-                আপনার ইনভেন্টরি আপডেট প্রসেস করা হয়েছে।
-              </p>
-            </div>
+        <div className="flex gap-3 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-emerald-800">
+          <CheckCircle2 className="h-5 w-5 shrink-0" />
+          <div className="text-xs">
+            <p className="font-bold">সফলভাবে সম্পন্ন হয়েছে!</p>
+            <p className="opacity-80">
+              আপনার ইনভেন্টরি আপডেট প্রসেস করা হয়েছে।
+            </p>
           </div>
-          
         </div>
       )}
 

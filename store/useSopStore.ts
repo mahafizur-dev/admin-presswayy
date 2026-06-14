@@ -24,7 +24,6 @@ interface SopStore {
 }
 
 // static ফিল্ড → snake_case column; custom field → custom_fields JSONB
-// (transformSOPDataToSQL শুধু পরিচিত ফিল্ড রাখে, তাই customFields আলাদা করে যোগ করি)
 function toBody(data: any) {
   return {
     ...transformSOPDataToSQL(data),
@@ -44,19 +43,41 @@ export const useSopStore = create<SopStore>((set) => ({
     try {
       set({ status: "submitting", errorMessage: "" });
 
+      const payload = toBody(updatedData);
+      // ডিবাগ করার জন্য পেলোডটি কনসোলে প্রিন্ট করে দেখা যাবে
+      console.log("Sending Update Payload:", payload);
+
       const response = await fetch(UPDATE_WEBHOOK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(toBody(updatedData)),
+        body: JSON.stringify(payload),
       });
 
-      if (!response.ok) throw new Error("Update failed");
+      if (!response.ok) {
+        // ব্যাকএন্ড/n8n থেকে পাঠানো আসল এরর মেসেজটি বের করার চেষ্টা
+        let serverError = "আপডেট করতে সমস্যা হয়েছে!";
+        try {
+          const errData = await response.json();
+          serverError =
+            errData.message || errData.error || JSON.stringify(errData);
+        } catch {
+          try {
+            const textError = await response.text();
+            if (textError) serverError = textError;
+          } catch {}
+        }
+        throw new Error(serverError);
+      }
 
       set({ status: "success" });
       setTimeout(() => set({ status: "idle" }), 3000);
       return true;
-    } catch (error) {
-      set({ status: "error", errorMessage: "আপডেট করতে সমস্যা হয়েছে!" });
+    } catch (error: any) {
+      console.error("UpdateSOP Error Details:", error);
+      set({
+        status: "error",
+        errorMessage: error.message || "আপডেট করতে সমস্যা হয়েছে!",
+      });
       return false;
     }
   },
@@ -72,26 +93,35 @@ export const useSopStore = create<SopStore>((set) => ({
       );
 
       if (response.ok) {
-        const dbData = await response.json();
-        // n8n রেসপন্স অ্যারে হিসেবে আসতে পারে
+        // ১. রেসপন্সটিকে টেক্সট হিসেবে নিন
+        const text = await response.text();
+
+        // ২. টেক্সট খালি থাকলে রিটার্ন করে দিন
+        if (!text) {
+          console.warn("API রেসপন্স খালি এসেছে!");
+          set({ isFetching: false });
+          return null;
+        }
+
+        // ৩. এরপর পার্স করুন
+        const dbData = JSON.parse(text);
         const result = Array.isArray(dbData) ? dbData[0] : dbData;
 
         if (result && Object.keys(result).length > 0) {
           set({ isFetching: false });
-          // custom_fields object-এ মোড়ানো ({items:[...]}) বা সরাসরি array — দুটোই handle
           const cf = result.custom_fields;
           const customFields = Array.isArray(cf)
             ? cf
             : Array.isArray(cf?.items)
               ? cf.items
               : [];
-          // static ফিল্ড + custom_fields দুটোই ফর্মে ফেরত পাঠাই
           return { ...transformSQLToSOPData(result), customFields } as any;
         }
       }
       set({ isFetching: false });
       return null;
     } catch (err) {
+      console.error("FetchSOP Error:", err);
       set({ isFetching: false, errorMessage: "ডেটা লোড করতে ব্যর্থ।" });
       return null;
     }
@@ -99,23 +129,42 @@ export const useSopStore = create<SopStore>((set) => ({
 
   // নির্দিষ্ট কোম্পানির জন্য নতুন ডেটা সাবমিট
   submitSOP: async (data) => {
-    set({ status: "submitting", errorMessage: "" });
     try {
+      set({ status: "submitting", errorMessage: "" });
+
+      const payload = toBody(data);
+      console.log("Sending Submit Payload:", payload);
+
       const response = await fetch(SUBMIT_WEBHOOK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(toBody(data)),
+        body: JSON.stringify(payload),
       });
 
-      if (response.ok) {
-        set({ status: "success" });
-        setTimeout(() => set({ status: "idle" }), 4000);
-        return true;
-      } else {
-        throw new Error("Submit failed");
+      if (!response.ok) {
+        let serverError = "সাবমিট করতে ব্যর্থ হয়েছে।";
+        try {
+          const errData = await response.json();
+          serverError =
+            errData.message || errData.error || JSON.stringify(errData);
+        } catch {
+          try {
+            const textError = await response.text();
+            if (textError) serverError = textError;
+          } catch {}
+        }
+        throw new Error(serverError);
       }
-    } catch (err) {
-      set({ status: "error", errorMessage: "সাবমিট করতে ব্যর্থ হয়েছে।" });
+
+      set({ status: "success" });
+      setTimeout(() => set({ status: "idle" }), 4000);
+      return true;
+    } catch (err: any) {
+      console.error("SubmitSOP Error Details:", err);
+      set({
+        status: "error",
+        errorMessage: err.message || "সাবমিট করতে ব্যর্থ হয়েছে।",
+      });
       return false;
     }
   },

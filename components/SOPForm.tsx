@@ -10,7 +10,6 @@ interface SOPFormProps {
   companyId?: string;
 }
 
-
 type FieldType = "input" | "select" | "textarea";
 
 interface FieldConfig {
@@ -23,8 +22,8 @@ interface FieldConfig {
   required?: boolean;
   full?: boolean;
   default?: string;
-  onlyWhenNew?: boolean; // শুধু নতুন SOP তৈরিতে দেখাবে (যেমন companyId)
-  showIf?: { field: string; equals: string }; // শর্তসাপেক্ষ ফিল্ড
+  onlyWhenNew?: boolean; 
+  showIf?: { field: string; equals: string }; 
 }
 
 // user runtime-এ যে custom field যোগ করে
@@ -77,7 +76,7 @@ const FIELD_CONFIG: FieldConfig[] = [
     label: "Payment Method",
     type: "input",
     group: "ব্যবসার তথ্য",
-    placeholder: "বিকাশ, নগদ...",
+    placeholder: "বিকাশ, নগদ, cash on delevery, etc...",
   },
 
   // ----- AI ব্যক্তিত্ব -----
@@ -95,7 +94,7 @@ const FIELD_CONFIG: FieldConfig[] = [
     label: "AI Name",
     type: "input",
     group: "AI ব্যক্তিত্ব",
-    placeholder: "যেমন: Sadia",
+    placeholder: "যেমন: Chitti",
   },
   {
     id: "replyLanguage",
@@ -264,7 +263,7 @@ const FIELD_CONFIG: FieldConfig[] = [
   },
 ];
 
-// প্রতিটি group-এর আইকন (নতুন group যোগ করলে এখানে আইকন দাও, নাহলে default)
+// প্রতিটি group-এর আইকন
 const GROUP_ICONS: Record<string, React.ReactNode> = {
   "ব্যবসার তথ্য": <path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4" />,
   "AI ব্যক্তিত্ব": (
@@ -284,7 +283,6 @@ const GROUP_ICONS: Record<string, React.ReactNode> = {
 const DEFAULT_ICON = (
   <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 8v4M12 16h.01" />
 );
-
 
 type FormValues = Record<string, string>;
 
@@ -310,7 +308,6 @@ const inputBase =
 const okRing = "border-slate-200 focus:border-indigo-400 focus:ring-indigo-100";
 const errRing = "border-rose-300 focus:border-rose-400 focus:ring-rose-100";
 
-
 export default function SOPForm({ companyId }: SOPFormProps) {
   const { status, isFetching, errorMessage, submitSOP, updateSOP, fetchSOP } =
     useSopStore();
@@ -331,13 +328,13 @@ export default function SOPForm({ companyId }: SOPFormProps) {
     formState: { errors },
     reset,
   } = useForm<FormValues>({
-    // dynamic schema → resolver type cast (runtime ঠিক, শুধু TS mismatch)
     resolver: zodResolver(schema) as any,
     defaultValues: buildDefaults(activeFields, companyId),
   });
 
-  // ----- কাস্টম ফিল্ড (runtime-এ user যোগ করে) -----
+  // ----- কাস্টম ফিল্ড -----
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
+  const [isExisting, setIsExisting] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [newType, setNewType] = useState<"input" | "textarea">("input");
 
@@ -356,34 +353,33 @@ export default function SOPForm({ companyId }: SOPFormProps) {
     setNewLabel("");
     setNewType("input");
   };
+
   const updateCustomValue = (id: string, value: string) =>
     setCustomFields((prev) =>
       prev.map((c) => (c.id === id ? { ...c, value } : c)),
     );
-  // নোট: custom field একবার যোগ করলে আর মুছে ফেলা যাবে না (ইচ্ছাকৃত)।
 
   useEffect(() => {
     async function loadExistingData() {
       if (companyId) {
         const existingData = await fetchSOP(companyId);
         if (existingData) {
-          // backend answers JSONB বা flat object — দুটোই handle
           const data: any = (existingData as any).answers ?? existingData;
           const { customFields: savedCustom, ...rest } = data || {};
           reset({ ...buildDefaults(activeFields, companyId), ...rest });
-          // null value → "" (controlled input warning এড়াতে)
           setCustomFields(
             Array.isArray(savedCustom)
               ? savedCustom.map((c: any) => ({ ...c, value: c.value ?? "" }))
               : [],
           );
+          setIsExisting(true); // <--- ডাটা পাওয়া গেছে, তাই এটি UPDATE
         } else {
           setValue("companyId", companyId, { shouldValidate: true });
+          setIsExisting(false); // <--- ডাটা নেই (নতুন আইডি), তাই এটি SUBMIT
         }
       }
     }
     loadExistingData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
 
   const values = watch();
@@ -392,8 +388,6 @@ export default function SOPForm({ companyId }: SOPFormProps) {
     !f.showIf || values[f.showIf.field] === f.showIf.equals;
 
   const onSubmit = async (data: FormValues) => {
-    // hidden শর্তসাপেক্ষ ফিল্ড বাদ দিয়ে payload
-    // খালি value → null (DB-তে NULL হিসেবে সেভ হবে)
     const nullIfEmpty = (v: string) => {
       const t = (v ?? "").trim();
       return t === "" ? null : t;
@@ -403,24 +397,27 @@ export default function SOPForm({ companyId }: SOPFormProps) {
     for (const f of activeFields) {
       if (isVisible(f)) payload[f.id] = nullIfEmpty(data[f.id]);
     }
-    // companyId কখনো null হবে না (required) — সরাসরি বসাই
     if (companyId) payload.companyId = companyId;
 
-    // custom field গুলো answers JSONB-তে; খালি value → null
     payload.customFields = customFields.map((c) => ({
       ...c,
       value: nullIfEmpty(c.value),
     }));
 
-    const isSuccess = await (companyId
+    // কনসোলে চেক করার জন্য
+    console.log(isExisting ? "Calling Update API..." : "Calling Submit API...");
+
+    // এখানে companyId এর বদলে isExisting চেক করে API কল করা হলো
+    const isSuccess = await (isExisting
       ? updateSOP(payload as any)
       : submitSOP(payload as any));
-    if (isSuccess && !companyId) {
-      reset(buildDefaults(activeFields));
-      setCustomFields([]);
+
+    if (isSuccess && !isExisting) {
+      // সফলভাবে নতুন সাবমিট হলে ফর্ম রিসেট না করে isExisting কে true করে দিচ্ছি
+      // যাতে পরের বার সাবমিট করলে updateSOP কল হয়
+      setIsExisting(true);
     }
   };
-
 
   const groups = useMemo(() => {
     const order: string[] = [];
@@ -434,8 +431,6 @@ export default function SOPForm({ companyId }: SOPFormProps) {
     }
     return order.map((title) => ({ title, fields: map[title] }));
   }, [activeFields]);
-
-  /* ---------- field renderer ---------- */
 
   const renderField = (f: FieldConfig) => {
     if (!isVisible(f)) return null;
@@ -521,7 +516,9 @@ export default function SOPForm({ companyId }: SOPFormProps) {
     <div className="flex flex-col">
       <div className="border-b border-slate-100 px-6 py-5">
         <h2 className="text-lg font-bold text-slate-900">
-          {companyId ? "ব্যবসার তথ্য আপডেট" : "নতুন ব্যবসার তথ্য"}
+          {isExisting
+            ? "আপনার ব্যবসার তথ্য আপডেট করুন"
+            : "আপনার ব্যবসার তথ্য দিন"}
         </h2>
         <p className="mt-0.5 text-sm text-slate-500">
           AI অ্যাসিস্ট্যান্ট কীভাবে গ্রাহকদের সাথে কথা বলবে তা নির্ধারণ করুন।
@@ -541,7 +538,12 @@ export default function SOPForm({ companyId }: SOPFormProps) {
         </div>
       )}
 
-      <form onSubmit={handleSubmit(onSubmit)} className="px-6 py-6">
+      <form
+        onSubmit={handleSubmit(onSubmit, (errs) =>
+          console.log("VALIDATION BLOCKED:", errs),
+        )}
+        className="px-6 py-6"
+      >
         <div className="space-y-8">
           {groups.map((group) => {
             const visible = group.fields.filter(isVisible);
@@ -669,13 +671,12 @@ export default function SOPForm({ companyId }: SOPFormProps) {
             </button>
           </div>
           <p className="hidden mt-4 text-xs text-slate-400 sm:block">
-            Note: আপনি যত বেশি কাস্টম ফিল্ড যোগ করবেন, তত বেশি AI প্রসেসিং খরচ বৃদ্ধি
-            পাবে।
+            Note: আপনি যত বেশি কাস্টম ফিল্ড যোগ করবেন, তত বেশি AI প্রসেসিং খরচ
+            বৃদ্ধি পাবে।
           </p>
         </section>
 
         <div className="mt-8 flex items-center justify-center gap-4 border-t border-slate-100 pt-5">
-         
           <button
             type="submit"
             disabled={status === "submitting"}
@@ -686,7 +687,7 @@ export default function SOPForm({ companyId }: SOPFormProps) {
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                 সংরক্ষণ হচ্ছে...
               </>
-            ) : companyId ? (
+            ) : isExisting ? (
               "আপডেট করুন"
             ) : (
               "সাবমিট করুন"

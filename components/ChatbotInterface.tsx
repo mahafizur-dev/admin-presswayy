@@ -19,8 +19,13 @@ interface ChatbotInterfaceProps {
 
 interface ReplyItem {
   reply_type?: string;
+  message_text?: string;
+  text?: string;
   message?: string;
-  images?: { image_url?: string }[];
+  content?: string;
+  msg?: string;
+  output?: string;
+  images?: Array<{ image_url?: string; url?: string } | string>;
 }
 
 interface Attachment {
@@ -31,7 +36,12 @@ interface Attachment {
   name: string;
 }
 
-type ProcessedMessage = Message & { content: ReplyItem[] | string };
+type ProcessedMessage = Message & {
+  content: ReplyItem[] | string;
+  sender: "user" | "bot";
+  timestamp: string;
+  images: string[];
+};
 
 /* --------------------------- constants --------------------------- */
 
@@ -46,20 +56,35 @@ const localId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 function formatTime(ts?: string): string {
   if (!ts) return "";
+
   const d = new Date(ts);
+
   return isNaN(d.getTime())
     ? ""
-    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    : d.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+}
+
+function unescapeNewlines(text: string): string {
+  return text.replace(/\\n/g, "\n");
 }
 
 function parseBotContent(text: string): ReplyItem[] | string {
   if (typeof text !== "string") return String(text ?? "");
-  const t = text.trim();
-  if (!t.startsWith("[") && !t.startsWith("{")) return text;
+
+  const safe = unescapeNewlines(text);
+  const t = safe.trim();
+
+  if (!t.startsWith("[") && !t.startsWith("{")) return safe;
+
   try {
     const parsed = JSON.parse(t);
+
     if (Array.isArray(parsed)) return parsed as ReplyItem[];
     if (parsed && typeof parsed === "object") return [parsed as ReplyItem];
+
     return text;
   } catch {
     return text;
@@ -69,25 +94,45 @@ function parseBotContent(text: string): ReplyItem[] | string {
 function readFileAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = reject;
+
     reader.readAsDataURL(file);
   });
 }
 
 async function uploadToCloudinary(file: File): Promise<string> {
-  if (!CLOUD_NAME || !UPLOAD_PRESET)
+  if (!CLOUD_NAME || !UPLOAD_PRESET) {
     throw new Error("Cloudinary config missing");
+  }
+
   const form = new FormData();
+
   form.append("file", file);
   form.append("upload_preset", UPLOAD_PRESET);
+
   const res = await fetch(
     `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`,
-    { method: "POST", body: form },
+    {
+      method: "POST",
+      body: form,
+    },
   );
-  if (!res.ok) throw new Error("Cloudinary upload failed");
+
+  if (!res.ok) {
+    throw new Error("Cloudinary upload failed");
+  }
+
   const data = await res.json();
+
   return data.secure_url as string;
+}
+
+function normalizeImageList(images?: string[]): string[] {
+  if (!Array.isArray(images)) return [];
+
+  return images.filter((src) => typeof src === "string" && src.trim());
 }
 
 /* ------------------------------ hooks ---------------------------- */
@@ -96,53 +141,72 @@ function useAttachments() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const update = (id: string, patch: Partial<Attachment>) =>
+  const update = useCallback((id: string, patch: Partial<Attachment>) => {
     setAttachments((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, ...patch } : a)),
+      prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
     );
+  }, []);
 
-  const remove = (id: string) =>
-    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  const remove = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((item) => item.id !== id));
+  }, []);
 
-  const clear = () => setAttachments([]);
+  const clear = useCallback(() => {
+    setAttachments([]);
+  }, []);
 
-  const addFiles = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const slots = Math.max(0, MAX_ATTACHMENTS - attachments.length);
-    const picked = Array.from(files).slice(0, slots);
+  const addFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
 
-    for (const file of picked) {
-      if (!file.type.startsWith("image/")) continue;
-      if (file.size > MAX_FILE_MB * 1024 * 1024) continue;
+      const slots = Math.max(0, MAX_ATTACHMENTS - attachments.length);
+      const picked = Array.from(files).slice(0, slots);
 
-      const id = localId();
-      let preview = "";
-      try {
-        preview = await readFileAsDataURL(file);
-      } catch {
-        /* ignore preview failure */
+      for (const file of picked) {
+        if (!file.type.startsWith("image/")) continue;
+        if (file.size > MAX_FILE_MB * 1024 * 1024) continue;
+
+        const id = localId();
+
+        let preview = "";
+
+        try {
+          preview = await readFileAsDataURL(file);
+        } catch {
+          /* ignore preview error */
+        }
+
+        setAttachments((prev) => [
+          ...prev,
+          {
+            id,
+            preview,
+            status: "uploading",
+            name: file.name,
+          },
+        ]);
+
+        uploadToCloudinary(file)
+          .then((url) => update(id, { url, status: "done" }))
+          .catch(() => update(id, { status: "error" }));
       }
 
-      setAttachments((prev) => [
-        ...prev,
-        { id, preview, status: "uploading", name: file.name },
-      ]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    },
+    [attachments.length, update],
+  );
 
-      uploadToCloudinary(file)
-        .then((url) => update(id, { url, status: "done" }))
-        .catch((err) => {
-          console.error("Upload error:", err);
-          update(id, { status: "error" });
-        });
-    }
+  const uploading = attachments.some((item) => item.status === "uploading");
 
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  const uploading = attachments.some((a) => a.status === "uploading");
-  const readyUrls = attachments
-    .filter((a) => a.status === "done" && a.url)
-    .map((a) => a.url as string);
+  const readyUrls = useMemo(
+    () =>
+      attachments
+        .filter((item) => item.status === "done" && item.url)
+        .map((item) => item.url as string),
+    [attachments],
+  );
 
   return {
     attachments,
@@ -166,17 +230,31 @@ function useAutoScroll(trigger: number, isSending: boolean) {
     setShowJump(false);
   }, []);
 
-  const onScroll = () => {
+  const onScroll = useCallback(() => {
     const el = scrollRef.current;
+
     if (!el) return;
+
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+
     nearBottomRef.current = distance < 120;
-    if (nearBottomRef.current) setShowJump(false);
-  };
+
+    if (nearBottomRef.current) {
+      setShowJump(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (nearBottomRef.current) scrollToBottom(trigger <= 1 ? "auto" : "smooth");
-    else setShowJump(true);
+    if (nearBottomRef.current) {
+      const timer = setTimeout(
+        () => scrollToBottom(trigger <= 1 ? "auto" : "smooth"),
+        50,
+      );
+
+      return () => clearTimeout(timer);
+    }
+
+    setShowJump(true);
   }, [trigger, isSending, scrollToBottom]);
 
   return {
@@ -228,8 +306,28 @@ function UserAvatar() {
   );
 }
 
-const Avatar = ({ sender }: { sender: "user" | "bot" }) =>
-  sender === "bot" ? <BotAvatar /> : <UserAvatar />;
+const Avatar = React.memo(({ sender }: { sender: "user" | "bot" }) =>
+  sender === "bot" ? <BotAvatar /> : <UserAvatar />,
+);
+
+Avatar.displayName = "Avatar";
+
+function SentTicks() {
+  return (
+    <svg
+      viewBox="0 0 18 12"
+      className="h-2.5 w-3.5 text-emerald-200"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M1 6.5 4 9.5 9.5 3" />
+      <path d="M7.5 9 8 9.5 13.5 3" />
+    </svg>
+  );
+}
 
 function TrashIcon({
   className = "h-[18px] w-[18px]",
@@ -251,32 +349,23 @@ function TrashIcon({
   );
 }
 
-function SentTicks() {
-  return (
-    <svg
-      viewBox="0 0 18 12"
-      className="h-2.5 w-3.5 text-emerald-200"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M1 6.5 4 9.5 9.5 3" />
-      <path d="M7.5 9 8 9.5 13.5 3" />
-    </svg>
-  );
-}
-
 function TokenCostBadge({ cost }: { cost?: RawCost }) {
   const display = computeDisplayCost(cost);
+
   if (!display?.visible) return null;
+
+  const rawAmount = Number(String(display.formatted).replace(/[^\d.]/g, ""));
+
+  const roundedAmount = Number.isFinite(rawAmount)
+    ? `৳${rawAmount.toFixed(2)}`
+    : display.formatted;
+
   return (
     <span
       className="rounded-full bg-emerald-50 px-1.5 py-0.5 font-mono text-[9px] font-medium text-emerald-700"
       title="এই reply-এর আনুমানিক খরচ"
     >
-      {display.formatted}
+      {roundedAmount}
     </span>
   );
 }
@@ -290,6 +379,7 @@ function ChatImage({
 }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+
   if (failed) {
     return (
       <div className="flex h-24 w-full items-center justify-center rounded-lg bg-slate-100 text-[10px] text-slate-400">
@@ -297,21 +387,50 @@ function ChatImage({
       </div>
     );
   }
+
   return (
     <div className="relative overflow-hidden rounded-lg">
       {!loaded && (
         <div className="absolute inset-0 animate-pulse bg-slate-200" />
       )}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
+
       <img
         src={src}
         alt="content"
         onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
         onClick={() => onOpen(src)}
-        className={`max-h-44 w-full cursor-zoom-in object-cover transition-opacity duration-300 ${loaded ? "opacity-100" : "opacity-0"}`}
+        className={`max-h-44 w-full cursor-zoom-in object-cover transition-opacity duration-300 ${
+          loaded ? "opacity-100" : "opacity-0"
+        }`}
         style={{ minHeight: loaded ? undefined : 96 }}
       />
+    </div>
+  );
+}
+
+function MessageImageGrid({
+  images,
+  onOpenImage,
+  className = "",
+}: {
+  images?: string[];
+  onOpenImage: (src: string) => void;
+  className?: string;
+}) {
+  const cleanImages = normalizeImageList(images);
+
+  if (cleanImages.length === 0) return null;
+
+  return (
+    <div
+      className={`${className} grid gap-1 ${
+        cleanImages.length === 1 ? "w-44 grid-cols-1" : "w-56 grid-cols-2"
+      }`}
+    >
+      {cleanImages.map((src, index) => (
+        <ChatImage key={`${src}-${index}`} src={src} onOpen={onOpenImage} />
+      ))}
     </div>
   );
 }
@@ -323,59 +442,82 @@ function MessageBody({
   onOpenImage,
 }: {
   msg: ProcessedMessage;
-  onOpenImage: (s: string) => void;
+  onOpenImage: (src: string) => void;
 }) {
   if (msg.sender === "user") {
     return msg.text ? (
       <p className="whitespace-pre-wrap break-words leading-snug">{msg.text}</p>
     ) : null;
   }
+
+  if (!msg.content) {
+    return msg.text ? (
+      <p className="whitespace-pre-wrap break-words leading-snug">{msg.text}</p>
+    ) : null;
+  }
+
   if (Array.isArray(msg.content)) {
     return (
       <div className="space-y-1.5">
-        {msg.content.map((item, idx) => (
-          <div key={idx} className="space-y-1.5">
-            {item.message && (
-              <p className="whitespace-pre-wrap break-words leading-snug">
-                {item.message}
-              </p>
-            )}
-            {Array.isArray(item.images) &&
-              item.images.map(
-                (img, i) =>
-                  img?.image_url && (
-                    <ChatImage
-                      key={i}
-                      src={img.image_url}
-                      onOpen={onOpenImage}
-                    />
-                  ),
+        {msg.content.map((item, index) => {
+          const botText =
+            item.message_text ||
+            item.text ||
+            item.message ||
+            item.content ||
+            item.msg ||
+            item.output ||
+            "";
+
+          const itemImages = Array.isArray(item.images)
+            ? (item.images
+                .map((img) =>
+                  typeof img === "string" ? img : img?.image_url || img?.url,
+                )
+                .filter(Boolean) as string[])
+            : [];
+
+          return (
+            <div key={index} className="space-y-1.5">
+              {botText && (
+                <p className="whitespace-pre-wrap break-words leading-snug">
+                  {unescapeNewlines(botText)}
+                </p>
               )}
-          </div>
-        ))}
+
+              <MessageImageGrid images={itemImages} onOpenImage={onOpenImage} />
+            </div>
+          );
+        })}
       </div>
     );
   }
+
+  const plainText =
+    typeof msg.content === "string" ? unescapeNewlines(msg.content) : "";
+
   return (
-    <p className="whitespace-pre-wrap break-words leading-snug">
-      {msg.content}
-    </p>
+    <p className="whitespace-pre-wrap break-words leading-snug">{plainText}</p>
   );
 }
 
-function MessageBubble({
+const MessageBubble = React.memo(function MessageBubble({
   msg,
   onOpenImage,
 }: {
   msg: ProcessedMessage;
-  onOpenImage: (s: string) => void;
+  onOpenImage: (src: string) => void;
 }) {
   const isUser = msg.sender === "user";
+
   return (
     <div
-      className={`flex items-end gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
+      className={`flex items-end gap-2 ${
+        isUser ? "flex-row-reverse" : "flex-row"
+      }`}
     >
       <Avatar sender={msg.sender} />
+
       <div
         className={`relative max-w-[78%] rounded-2xl px-3 py-2 text-[13px] ${
           isUser
@@ -383,19 +525,25 @@ function MessageBubble({
             : "rounded-bl-md border border-slate-200 bg-white text-slate-800"
         }`}
       >
-        {isUser && msg.images && msg.images.length > 0 && (
-          <div
-            className={`mb-1.5 grid gap-1 ${
-              msg.images.length === 1 ? "w-44 grid-cols-1" : "w-56 grid-cols-2"
-            }`}
-          >
-            {msg.images.map((src, i) => (
-              <ChatImage key={i} src={src} onOpen={onOpenImage} />
-            ))}
-          </div>
+        {/* User image attachments */}
+        {isUser && (
+          <MessageImageGrid
+            images={msg.images}
+            onOpenImage={onOpenImage}
+            className="mb-1.5"
+          />
         )}
 
         <MessageBody msg={msg} onOpenImage={onOpenImage} />
+
+        {/* Bot image attachments from DB attachments.image_urls */}
+        {!isUser && (
+          <MessageImageGrid
+            images={msg.images}
+            onOpenImage={onOpenImage}
+            className="mt-2"
+          />
+        )}
 
         <div
           className={`mt-1 flex items-center justify-end gap-1.5 ${
@@ -409,12 +557,13 @@ function MessageBubble({
       </div>
     </div>
   );
-}
+});
 
 function TypingIndicator() {
   return (
     <div className="flex items-end gap-2">
       <BotAvatar />
+
       <div className="flex items-center gap-1 rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3 py-2.5">
         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400" />
         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.15s]" />
@@ -436,6 +585,7 @@ const EmptyState = () => (
     <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50">
       <BotAvatar />
     </div>
+
     <div className="space-y-0.5">
       <p className="text-sm font-medium text-slate-700">নতুন চ্যাট শুরু করুন</p>
       <p className="text-xs text-slate-400">যেকোনো প্রশ্ন বা ছবি পাঠান 👋</p>
@@ -457,6 +607,7 @@ function ConfirmDialog({
   onCancel: () => void;
 }) {
   if (!open) return null;
+
   return (
     <div
       onClick={busy ? undefined : onCancel}
@@ -465,23 +616,26 @@ function ConfirmDialog({
       aria-modal="true"
     >
       <div
-        onClick={(e) => e.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
         className="w-full max-w-[300px] overflow-hidden rounded-2xl bg-white shadow-xl"
       >
         <div className="flex flex-col items-center gap-3 px-5 pt-5 text-center">
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-red-50 text-red-600">
             <TrashIcon className="h-5 w-5" />
           </div>
+
           <div className="space-y-1">
             <h4 className="text-sm font-semibold text-slate-800">
               সব চ্যাট মুছে ফেলবেন?
             </h4>
+
             <p className="text-xs leading-relaxed text-slate-500">
               এই সেশনের সব মেসেজ ও কথোপকথন স্থায়ীভাবে মুছে যাবে। এটি ফেরানো
               যাবে না।
             </p>
           </div>
         </div>
+
         <div className="mt-4 flex gap-2 border-t border-slate-100 p-3">
           <button
             type="button"
@@ -491,6 +645,7 @@ function ConfirmDialog({
           >
             বাতিল
           </button>
+
           <button
             type="button"
             onClick={onConfirm}
@@ -522,29 +677,34 @@ function AttachmentPreview({
   onRemove: (id: string) => void;
 }) {
   if (items.length === 0) return null;
+
   return (
     <div className="flex gap-2 overflow-x-auto border-t border-slate-100 bg-slate-50 px-3 py-2">
-      {items.map((a) => (
-        <div key={a.id} className="relative shrink-0">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
+      {items.map((item) => (
+        <div key={item.id} className="relative shrink-0">
           <img
-            src={a.preview || a.url}
-            alt={a.name}
-            className={`h-12 w-12 rounded-lg border border-slate-200 object-cover ${a.status !== "done" ? "opacity-60" : ""}`}
+            src={item.preview || item.url}
+            alt={item.name}
+            className={`h-12 w-12 rounded-lg border border-slate-200 object-cover ${
+              item.status !== "done" ? "opacity-60" : ""
+            }`}
           />
-          {a.status === "uploading" && (
+
+          {item.status === "uploading" && (
             <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/30">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
             </div>
           )}
-          {a.status === "error" && (
+
+          {item.status === "error" && (
             <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-red-500/40 text-[9px] font-bold text-white">
               ত্রুটি
             </div>
           )}
+
           <button
             type="button"
-            onClick={() => onRemove(a.id)}
+            onClick={() => onRemove(item.id)}
             className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-700 text-white transition hover:bg-slate-900"
             aria-label="সরান"
           >
@@ -589,11 +749,11 @@ function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
           <path d="M18 6 6 18M6 6l12 12" />
         </svg>
       </button>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
+
       <img
         src={src}
         alt="preview"
-        onClick={(e) => e.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
         className="max-h-[90vh] max-w-full rounded-lg object-contain shadow-2xl"
       />
     </div>
@@ -613,14 +773,24 @@ function Composer({
   onSubmit,
 }: {
   inputMessage: string;
-  setInputMessage: (v: string) => void;
+  setInputMessage: (value: string) => void;
   uploading: boolean;
   canSend: boolean;
   attachmentCount: number;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   onPickFiles: (files: FileList | null) => void;
-  onSubmit: (e: React.FormEvent) => void;
+  onSubmit: (event: React.FormEvent) => void;
 }) {
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+
+      if (canSend) {
+        onSubmit(event as unknown as React.FormEvent);
+      }
+    }
+  };
+
   return (
     <form
       onSubmit={onSubmit}
@@ -632,7 +802,7 @@ function Composer({
         accept="image/*"
         multiple
         className="hidden"
-        onChange={(e) => onPickFiles(e.target.files)}
+        onChange={(event) => onPickFiles(event.target.files)}
       />
 
       <button
@@ -641,7 +811,6 @@ function Composer({
         disabled={attachmentCount >= MAX_ATTACHMENTS}
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
         aria-label="ছবি যোগ করুন"
-        title="ছবি যোগ করুন"
       >
         <svg
           viewBox="0 0 24 24"
@@ -659,9 +828,11 @@ function Composer({
       <input
         type="text"
         value={inputMessage}
-        onChange={(e) => setInputMessage(e.target.value)}
+        onChange={(event) => setInputMessage(event.target.value)}
+        onKeyDown={handleKeyDown}
         placeholder={uploading ? "আপলোড হচ্ছে..." : "মেসেজ লিখুন..."}
-        className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-2.5 text-[13px] text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-100"
+        disabled={uploading}
+        className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-2.5 text-[13px] text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed"
       />
 
       <button
@@ -696,12 +867,10 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
 
   const {
     messages,
-    sessionId,
     isFetching,
     isSending,
     isDeleting,
     errorMessage,
-    initSession,
     fetchHistory,
     sendMessage,
     clearChats,
@@ -716,6 +885,7 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
     uploading,
     readyUrls,
   } = useAttachments();
+
   const {
     scrollRef,
     bottomRef,
@@ -727,17 +897,53 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
 
   useEffect(() => {
     if (companyId) {
-      initSession();
       fetchHistory(companyId);
     }
-  }, [companyId, initSession, fetchHistory]);
+  }, [companyId, fetchHistory]);
 
   const processedMessages: ProcessedMessage[] = useMemo(
     () =>
-      messages.map((msg) => ({
-        ...msg,
-        content: msg.sender === "bot" ? parseBotContent(msg.text) : msg.text,
-      })),
+      messages.map((msg: any) => {
+        const sender =
+          (msg.sender || msg.sender_type || "bot").toLowerCase() === "user"
+            ? "user"
+            : "bot";
+
+        const timestamp = msg.timestamp || msg.created_at || "";
+        let text = msg.text || "";
+        let images: string[] = normalizeImageList(msg.images);
+
+        const isImageType =
+          String(msg.message_type || "").toLowerCase() === "image";
+
+        const looksLikeUrl = (value: string) =>
+          /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|avif|svg)(\?.*)?$/i.test(
+            value,
+          ) ||
+          value.includes("cloudinary.com") ||
+          value.includes("res.cloudinary");
+
+        if (sender === "user" && images.length === 0 && text) {
+          const parts = text
+            .split(",")
+            .map((part: string) => part.trim())
+            .filter(Boolean);
+
+          if (parts.every(looksLikeUrl) || isImageType) {
+            images = parts;
+            text = "";
+          }
+        }
+
+        return {
+          ...msg,
+          sender,
+          timestamp,
+          text,
+          images,
+          content: sender === "bot" ? parseBotContent(text) : text,
+        };
+      }),
     [messages],
   );
 
@@ -746,56 +952,67 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
     !isSending &&
     !uploading;
 
-  const hasMessages = messages.length > 0;
-  const canDelete = hasMessages && !isDeleting && !isSending && !isFetching;
+  const handleSend = useCallback(
+    async (event: React.FormEvent) => {
+      event.preventDefault();
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canSend) return;
-    const textToSend = inputMessage;
-    const urls = readyUrls;
-    setInputMessage("");
-    clear();
-    nearBottomRef.current = true;
-    await sendMessage(companyId, textToSend, urls);
-  };
+      if (!canSend) return;
 
-  const handleConfirmDelete = async () => {
+      const textToSend = inputMessage;
+      const urls = readyUrls;
+
+      setInputMessage("");
+      clear();
+      nearBottomRef.current = true;
+
+      await sendMessage(companyId, textToSend, urls);
+    },
+    [
+      canSend,
+      inputMessage,
+      readyUrls,
+      clear,
+      nearBottomRef,
+      sendMessage,
+      companyId,
+    ],
+  );
+
+  const handleConfirmDelete = useCallback(async () => {
     await clearChats(companyId);
     setConfirmOpen(false);
-  };
+  }, [clearChats, companyId]);
 
   return (
-    <div className="relative flex h-[62vh] max-h-[540px] w-full max-w-md mx-auto flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:h-[540px]">
+    <div className="relative mx-auto flex h-[62vh] max-h-[540px] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:h-[540px]">
       {/* Header */}
       <header className="flex items-center gap-2.5 border-b border-slate-100 bg-white px-3.5 py-3">
         <div className="relative">
           <BotAvatar />
           <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500" />
         </div>
+
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-semibold leading-tight text-slate-800">
             Presswayy AI
           </h3>
+
           <span className="text-[11px] text-emerald-600">Online</span>
         </div>
 
-        {/* Clear chat */}
         <button
           type="button"
           onClick={() => setConfirmOpen(true)}
-          disabled={!canDelete}
-          className="flex shrink-0 items-center gap-1 rounded-full border border-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-slate-200 disabled:hover:bg-transparent disabled:hover:text-slate-500"
-          aria-label="Clear chat"
-          title="Clear chat"
+          disabled={
+            messages.length === 0 || isDeleting || isSending || isFetching
+          }
+          className="flex shrink-0 items-center gap-1 rounded-full border border-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
         >
           Clear chat
         </button>
-
-        
       </header>
 
-      {/* Messages */}
+      {/* Message list */}
       <div
         ref={scrollRef}
         onScroll={onScroll}
@@ -807,10 +1024,16 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
           <EmptyState />
         ) : (
           <div className="space-y-2.5">
-            {processedMessages.map((msg) => (
-              <MessageBubble key={msg.id} msg={msg} onOpenImage={setLightbox} />
+            {processedMessages.map((msg, index) => (
+              <MessageBubble
+                key={msg.id ?? `${msg.timestamp}-${index}`}
+                msg={msg}
+                onOpenImage={setLightbox}
+              />
             ))}
+
             {isSending && <TypingIndicator />}
+
             <div ref={bottomRef} />
           </div>
         )}
@@ -836,14 +1059,17 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
         )}
       </div>
 
+      {/* Error banner */}
       {errorMessage && (
         <div className="border-t border-red-100 bg-red-50 px-3 py-1.5 text-center text-[11px] text-red-600">
           {errorMessage}
         </div>
       )}
 
+      {/* Attachment preview */}
       <AttachmentPreview items={attachments} onRemove={remove} />
 
+      {/* Composer */}
       <Composer
         inputMessage={inputMessage}
         setInputMessage={setInputMessage}
@@ -855,6 +1081,7 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
         onSubmit={handleSend}
       />
 
+      {/* Confirm delete dialog */}
       <ConfirmDialog
         open={confirmOpen}
         busy={isDeleting}
@@ -862,6 +1089,7 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
         onCancel={() => setConfirmOpen(false)}
       />
 
+      {/* Lightbox */}
       {lightbox && (
         <Lightbox src={lightbox} onClose={() => setLightbox(null)} />
       )}

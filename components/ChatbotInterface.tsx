@@ -36,6 +36,11 @@ interface Attachment {
   name: string;
 }
 
+interface LightboxState {
+  all: string[];
+  index: number;
+}
+
 type ProcessedMessage = Message & {
   content: ReplyItem[] | string;
   sender: "user" | "bot";
@@ -47,6 +52,7 @@ type ProcessedMessage = Message & {
 
 const MAX_ATTACHMENTS = 4;
 const MAX_FILE_MB = 10;
+const GRID_MAX = 4;
 const CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || "";
 const UPLOAD_PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "";
 
@@ -56,15 +62,10 @@ const localId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 function formatTime(ts?: string): string {
   if (!ts) return "";
-
   const d = new Date(ts);
-
   return isNaN(d.getTime())
     ? ""
-    : d.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      });
+    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function unescapeNewlines(text: string): string {
@@ -73,18 +74,13 @@ function unescapeNewlines(text: string): string {
 
 function parseBotContent(text: string): ReplyItem[] | string {
   if (typeof text !== "string") return String(text ?? "");
-
   const safe = unescapeNewlines(text);
   const t = safe.trim();
-
   if (!t.startsWith("[") && !t.startsWith("{")) return safe;
-
   try {
     const parsed = JSON.parse(t);
-
     if (Array.isArray(parsed)) return parsed as ReplyItem[];
     if (parsed && typeof parsed === "object") return [parsed as ReplyItem];
-
     return text;
   } catch {
     return text;
@@ -94,10 +90,8 @@ function parseBotContent(text: string): ReplyItem[] | string {
 function readFileAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = reject;
-
     reader.readAsDataURL(file);
   });
 }
@@ -106,33 +100,69 @@ async function uploadToCloudinary(file: File): Promise<string> {
   if (!CLOUD_NAME || !UPLOAD_PRESET) {
     throw new Error("Cloudinary config missing");
   }
-
   const form = new FormData();
-
   form.append("file", file);
   form.append("upload_preset", UPLOAD_PRESET);
-
   const res = await fetch(
     `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`,
-    {
-      method: "POST",
-      body: form,
-    },
+    { method: "POST", body: form },
   );
-
-  if (!res.ok) {
-    throw new Error("Cloudinary upload failed");
-  }
-
+  if (!res.ok) throw new Error("Cloudinary upload failed");
   const data = await res.json();
-
-  return data.secure_url as string;
+  // force a web-safe delivery format — fixes iPhone HEIC photos not rendering
+  return (data.secure_url as string).replace(
+    "/upload/",
+    "/upload/f_auto,q_auto/",
+  );
 }
 
 function normalizeImageList(images?: string[]): string[] {
   if (!Array.isArray(images)) return [];
-
   return images.filter((src) => typeof src === "string" && src.trim());
+}
+
+function looksLikeImageUrl(value: string): boolean {
+  if (typeof value !== "string") return false;
+  const v = value.trim();
+  // Must be a clean, single-token URL — no stray whitespace inside, which is
+  // the tell-tale sign of a split artifact that would 404 at <img> load time.
+  if (!/^https?:\/\/\S+$/.test(v)) return false;
+  return (
+    /\.(jpg|jpeg|png|gif|webp|avif|svg)(\?.*)?$/i.test(v) ||
+    v.includes("cloudinary.com") ||
+    v.includes("res.cloudinary")
+  );
+}
+
+// Strips separator junk left on a URL after splitting on protocol boundaries:
+// trailing commas, semicolons, and surrounding whitespace.
+function stripUrlSeparators(value: string): string {
+  return value
+    .trim()
+    .replace(/[,;\s]+$/, "")
+    .trim();
+}
+
+// Splits a text field that may contain one or more image URLs.
+// Splits on protocol boundaries (https://) rather than commas so that
+// Cloudinary transform params like f_auto,q_auto are never broken apart,
+// then trims any separator characters left clinging to each fragment.
+function extractImageUrlsFromText(text: string): string[] {
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+
+  const protocolCount = (trimmed.match(/https?:\/\//g) || []).length;
+  if (protocolCount === 0) return [];
+
+  if (protocolCount === 1) {
+    const clean = stripUrlSeparators(trimmed);
+    return looksLikeImageUrl(clean) ? [clean] : [];
+  }
+
+  return trimmed
+    .split(/(?=https?:\/\/)/)
+    .map(stripUrlSeparators)
+    .filter(looksLikeImageUrl);
 }
 
 /* ------------------------------ hooks ---------------------------- */
@@ -151,14 +181,11 @@ function useAttachments() {
     setAttachments((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
-  const clear = useCallback(() => {
-    setAttachments([]);
-  }, []);
+  const clear = useCallback(() => setAttachments([]), []);
 
   const addFiles = useCallback(
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
-
       const slots = Math.max(0, MAX_ATTACHMENTS - attachments.length);
       const picked = Array.from(files).slice(0, slots);
 
@@ -167,9 +194,7 @@ function useAttachments() {
         if (file.size > MAX_FILE_MB * 1024 * 1024) continue;
 
         const id = localId();
-
         let preview = "";
-
         try {
           preview = await readFileAsDataURL(file);
         } catch {
@@ -178,12 +203,7 @@ function useAttachments() {
 
         setAttachments((prev) => [
           ...prev,
-          {
-            id,
-            preview,
-            status: "uploading",
-            name: file.name,
-          },
+          { id, preview, status: "uploading", name: file.name },
         ]);
 
         uploadToCloudinary(file)
@@ -191,9 +211,7 @@ function useAttachments() {
           .catch(() => update(id, { status: "error" }));
       }
 
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+      if (fileInputRef.current) fileInputRef.current.value = "";
     },
     [attachments.length, update],
   );
@@ -232,16 +250,10 @@ function useAutoScroll(trigger: number, isSending: boolean) {
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
-
     if (!el) return;
-
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-
     nearBottomRef.current = distance < 120;
-
-    if (nearBottomRef.current) {
-      setShowJump(false);
-    }
+    if (nearBottomRef.current) setShowJump(false);
   }, []);
 
   useEffect(() => {
@@ -250,10 +262,8 @@ function useAutoScroll(trigger: number, isSending: boolean) {
         () => scrollToBottom(trigger <= 1 ? "auto" : "smooth"),
         50,
       );
-
       return () => clearTimeout(timer);
     }
-
     setShowJump(true);
   }, [trigger, isSending, scrollToBottom]);
 
@@ -309,7 +319,6 @@ function UserAvatar() {
 const Avatar = React.memo(({ sender }: { sender: "user" | "bot" }) =>
   sender === "bot" ? <BotAvatar /> : <UserAvatar />,
 );
-
 Avatar.displayName = "Avatar";
 
 function SentTicks() {
@@ -351,15 +360,11 @@ function TrashIcon({
 
 function TokenCostBadge({ cost }: { cost?: RawCost }) {
   const display = computeDisplayCost(cost);
-
   if (!display?.visible) return null;
-
   const rawAmount = Number(String(display.formatted).replace(/[^\d.]/g, ""));
-
   const roundedAmount = Number.isFinite(rawAmount)
     ? `৳${rawAmount.toFixed(2)}`
     : display.formatted;
-
   return (
     <span
       className="rounded-full bg-emerald-50 px-1.5 py-0.5 font-mono text-[9px] font-medium text-emerald-700"
@@ -370,28 +375,42 @@ function TokenCostBadge({ cost }: { cost?: RawCost }) {
   );
 }
 
+/* ----------------------- image grid system ----------------------- */
+
 function ChatImage({
   src,
   onOpen,
+  dimmed = false,
 }: {
   src: string;
-  onOpen: (src: string) => void;
+  onOpen: () => void;
+  dimmed?: boolean;
 }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
 
-  if (failed) {
-    return (
-      <div className="flex h-24 w-full items-center justify-center rounded-lg bg-slate-100 text-[10px] text-slate-400">
-        ছবি লোড হয়নি
-      </div>
-    );
-  }
+  // Reset per-src state so a stale failed/loaded never bleeds into a new src
+  useEffect(() => {
+    setLoaded(false);
+    setFailed(false);
+  }, [src]);
+
+  if (!src) return null;
 
   return (
-    <div className="relative overflow-hidden rounded-lg">
-      {!loaded && (
+    <div
+      className="group relative h-full w-full overflow-hidden"
+      onClick={!failed ? onOpen : undefined}
+      style={{ cursor: failed ? "default" : "zoom-in" }}
+    >
+      {!loaded && !failed && (
         <div className="absolute inset-0 animate-pulse bg-slate-200" />
+      )}
+
+      {failed && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-100 text-[10px] text-slate-400">
+          ছবি লোড হয়নি
+        </div>
       )}
 
       <img
@@ -399,14 +418,48 @@ function ChatImage({
         alt="content"
         onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
-        onClick={() => onOpen(src)}
-        className={`max-h-44 w-full cursor-zoom-in object-cover transition-opacity duration-300 ${
-          loaded ? "opacity-100" : "opacity-0"
-        }`}
-        style={{ minHeight: loaded ? undefined : 96 }}
+        className={`h-full w-full object-cover transition-opacity duration-300 ${
+          dimmed ? "brightness-[0.4]" : ""
+        } ${loaded && !failed ? "opacity-100" : "opacity-0"}`}
       />
+
+      {loaded && !failed && !dimmed && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors duration-150 group-hover:bg-black/25">
+          <svg
+            viewBox="0 0 24 24"
+            className="h-5 w-5 text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.35-4.35M11 8v6M8 11h6" />
+          </svg>
+        </div>
+      )}
     </div>
   );
+}
+
+function gridTemplateColumns(count: number): string {
+  if (count === 1) return "grid-cols-1";
+  if (count === 2) return "grid-cols-2";
+  if (count === 3) return "grid-cols-[2fr_1fr]";
+  return "grid-cols-2";
+}
+
+function slotHeight(count: number, index: number): string {
+  if (count === 1) return "h-40";
+  if (count === 2) return "h-28";
+  // count === 3: left slot spans 2 rows — grid row heights (set by right slots) control it
+  if (count === 3) return index === 0 ? "" : "h-20";
+  return "h-28";
+}
+
+function slotRowSpan(count: number, index: number): string {
+  return count === 3 && index === 0 ? "row-span-2" : "";
 }
 
 function MessageImageGrid({
@@ -415,42 +468,195 @@ function MessageImageGrid({
   className = "",
 }: {
   images?: string[];
-  onOpenImage: (src: string) => void;
+  onOpenImage: (all: string[], index: number) => void;
   className?: string;
 }) {
-  const cleanImages = normalizeImageList(images);
+  const clean = normalizeImageList(images);
+  if (clean.length === 0) return null;
 
-  if (cleanImages.length === 0) return null;
+  const shown = clean.slice(0, GRID_MAX);
+  const overflow = clean.length - GRID_MAX;
 
   return (
     <div
-      className={`${className} grid gap-1 ${
-        cleanImages.length === 1 ? "w-44 grid-cols-1" : "w-56 grid-cols-2"
-      }`}
+      className={`${className} grid gap-[3px] overflow-hidden rounded-xl ${gridTemplateColumns(shown.length)}`}
     >
-      {cleanImages.map((src, index) => (
-        <ChatImage key={`${src}-${index}`} src={src} onOpen={onOpenImage} />
-      ))}
+      {shown.map((src, i) => {
+        const isOverflowSlot = i === GRID_MAX - 1 && overflow > 0;
+
+        return (
+          <div
+            key={`${src}-${i}`}
+            className={`relative overflow-hidden ${slotHeight(shown.length, i)} ${slotRowSpan(shown.length, i)}`}
+          >
+            {isOverflowSlot ? (
+              <div className="relative h-full w-full">
+                {/* dimmed thumbnail with shared error handling */}
+                <ChatImage
+                  src={src}
+                  onOpen={() => onOpenImage(clean, i)}
+                  dimmed
+                />
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-0.5">
+                  <span className="text-xl font-medium leading-none text-white">
+                    +{overflow}
+                  </span>
+                  <span className="text-[11px] text-white/80">more</span>
+                </div>
+              </div>
+            ) : (
+              <ChatImage src={src} onOpen={() => onOpenImage(clean, i)} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------------------------- lightbox --------------------------- */
+
+function Lightbox({
+  all,
+  index,
+  onClose,
+}: {
+  all: string[];
+  index: number;
+  onClose: () => void;
+}) {
+  const [current, setCurrent] = useState(index);
+  const hasPrev = current > 0;
+  const hasNext = current < all.length - 1;
+
+  // Bind key handler once; use functional updates + bounds inside so the
+  // listener never goes stale as `current` changes.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowLeft") setCurrent((c) => (c > 0 ? c - 1 : c));
+      if (e.key === "ArrowRight")
+        setCurrent((c) => (c < all.length - 1 ? c + 1 : c));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [all.length, onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+    >
+      <button
+        onClick={onClose}
+        className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+        aria-label="বন্ধ করুন"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="h-5 w-5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
+
+      {hasPrev && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setCurrent((c) => c - 1);
+          }}
+          className="absolute left-3 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+          aria-label="আগের ছবি"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            className="h-5 w-5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="m15 18-6-6 6-6" />
+          </svg>
+        </button>
+      )}
+
+      <img
+        src={all[current]}
+        alt="preview"
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[90vh] max-w-full rounded-lg object-contain shadow-2xl"
+      />
+
+      {hasNext && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setCurrent((c) => c + 1);
+          }}
+          className="absolute right-3 flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+          aria-label="পরের ছবি"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            className="h-5 w-5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+        </button>
+      )}
+
+      {all.length > 1 && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-3 py-1 text-xs text-white">
+          {current + 1} / {all.length}
+        </div>
+      )}
     </div>
   );
 }
 
 /* --------------------------- message ----------------------------- */
 
+function extractReplyItemImages(item: ReplyItem): string[] {
+  if (!Array.isArray(item.images)) return [];
+  return item.images
+    .map((img) => (typeof img === "string" ? img : img?.image_url || img?.url))
+    .filter((src): src is string => Boolean(src));
+}
+
+function extractReplyItemText(item: ReplyItem): string {
+  return (
+    item.message_text ||
+    item.text ||
+    item.message ||
+    item.content ||
+    item.msg ||
+    item.output ||
+    ""
+  );
+}
+
 function MessageBody({
   msg,
   onOpenImage,
 }: {
   msg: ProcessedMessage;
-  onOpenImage: (src: string) => void;
+  onOpenImage: (all: string[], index: number) => void;
 }) {
-  if (msg.sender === "user") {
-    return msg.text ? (
-      <p className="whitespace-pre-wrap break-words leading-snug">{msg.text}</p>
-    ) : null;
-  }
-
-  if (!msg.content) {
+  // User messages and bot messages without parsed content fall back to plain text.
+  if (msg.sender === "user" || !msg.content) {
     return msg.text ? (
       <p className="whitespace-pre-wrap break-words leading-snug">{msg.text}</p>
     ) : null;
@@ -460,22 +666,8 @@ function MessageBody({
     return (
       <div className="space-y-1.5">
         {msg.content.map((item, index) => {
-          const botText =
-            item.message_text ||
-            item.text ||
-            item.message ||
-            item.content ||
-            item.msg ||
-            item.output ||
-            "";
-
-          const itemImages = Array.isArray(item.images)
-            ? (item.images
-                .map((img) =>
-                  typeof img === "string" ? img : img?.image_url || img?.url,
-                )
-                .filter(Boolean) as string[])
-            : [];
+          const botText = extractReplyItemText(item);
+          const itemImages = extractReplyItemImages(item);
 
           return (
             <div key={index} className="space-y-1.5">
@@ -484,7 +676,6 @@ function MessageBody({
                   {unescapeNewlines(botText)}
                 </p>
               )}
-
               <MessageImageGrid images={itemImages} onOpenImage={onOpenImage} />
             </div>
           );
@@ -495,7 +686,6 @@ function MessageBody({
 
   const plainText =
     typeof msg.content === "string" ? unescapeNewlines(msg.content) : "";
-
   return (
     <p className="whitespace-pre-wrap break-words leading-snug">{plainText}</p>
   );
@@ -506,15 +696,13 @@ const MessageBubble = React.memo(function MessageBubble({
   onOpenImage,
 }: {
   msg: ProcessedMessage;
-  onOpenImage: (src: string) => void;
+  onOpenImage: (all: string[], index: number) => void;
 }) {
   const isUser = msg.sender === "user";
 
   return (
     <div
-      className={`flex items-end gap-2 ${
-        isUser ? "flex-row-reverse" : "flex-row"
-      }`}
+      className={`flex items-end gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
     >
       <Avatar sender={msg.sender} />
 
@@ -525,7 +713,6 @@ const MessageBubble = React.memo(function MessageBubble({
             : "rounded-bl-md border border-slate-200 bg-white text-slate-800"
         }`}
       >
-        {/* User image attachments */}
         {isUser && (
           <MessageImageGrid
             images={msg.images}
@@ -536,7 +723,6 @@ const MessageBubble = React.memo(function MessageBubble({
 
         <MessageBody msg={msg} onOpenImage={onOpenImage} />
 
-        {/* Bot image attachments from DB attachments.image_urls */}
         {!isUser && (
           <MessageImageGrid
             images={msg.images}
@@ -563,7 +749,6 @@ function TypingIndicator() {
   return (
     <div className="flex items-end gap-2">
       <BotAvatar />
-
       <div className="flex items-center gap-1 rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3 py-2.5">
         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400" />
         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-emerald-400 [animation-delay:-0.15s]" />
@@ -585,7 +770,6 @@ const EmptyState = () => (
     <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50">
       <BotAvatar />
     </div>
-
     <div className="space-y-0.5">
       <p className="text-sm font-medium text-slate-700">নতুন চ্যাট শুরু করুন</p>
       <p className="text-xs text-slate-400">যেকোনো প্রশ্ন বা ছবি পাঠান 👋</p>
@@ -616,19 +800,17 @@ function ConfirmDialog({
       aria-modal="true"
     >
       <div
-        onClick={(event) => event.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
         className="w-full max-w-[300px] overflow-hidden rounded-2xl bg-white shadow-xl"
       >
         <div className="flex flex-col items-center gap-3 px-5 pt-5 text-center">
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-red-50 text-red-600">
             <TrashIcon className="h-5 w-5" />
           </div>
-
           <div className="space-y-1">
             <h4 className="text-sm font-semibold text-slate-800">
               সব চ্যাট মুছে ফেলবেন?
             </h4>
-
             <p className="text-xs leading-relaxed text-slate-500">
               এই সেশনের সব মেসেজ ও কথোপকথন স্থায়ীভাবে মুছে যাবে। এটি ফেরানো
               যাবে না।
@@ -645,7 +827,6 @@ function ConfirmDialog({
           >
             বাতিল
           </button>
-
           <button
             type="button"
             onClick={onConfirm}
@@ -689,19 +870,16 @@ function AttachmentPreview({
               item.status !== "done" ? "opacity-60" : ""
             }`}
           />
-
           {item.status === "uploading" && (
             <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/30">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
             </div>
           )}
-
           {item.status === "error" && (
             <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-red-500/40 text-[9px] font-bold text-white">
               ত্রুটি
             </div>
           )}
-
           <button
             type="button"
             onClick={() => onRemove(item.id)}
@@ -722,40 +900,6 @@ function AttachmentPreview({
           </button>
         </div>
       ))}
-    </div>
-  );
-}
-
-function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
-  return (
-    <div
-      onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
-    >
-      <button
-        onClick={onClose}
-        className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
-        aria-label="বন্ধ করুন"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          className="h-6 w-6"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M18 6 6 18M6 6l12 12" />
-        </svg>
-      </button>
-
-      <img
-        src={src}
-        alt="preview"
-        onClick={(event) => event.stopPropagation()}
-        className="max-h-[90vh] max-w-full rounded-lg object-contain shadow-2xl"
-      />
     </div>
   );
 }
@@ -781,13 +925,10 @@ function Composer({
   onPickFiles: (files: FileList | null) => void;
   onSubmit: (event: React.FormEvent) => void;
 }) {
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-
-      if (canSend) {
-        onSubmit(event as unknown as React.FormEvent);
-      }
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (canSend) onSubmit(e as unknown as React.FormEvent);
     }
   };
 
@@ -802,7 +943,7 @@ function Composer({
         accept="image/*"
         multiple
         className="hidden"
-        onChange={(event) => onPickFiles(event.target.files)}
+        onChange={(e) => onPickFiles(e.target.files)}
       />
 
       <button
@@ -828,7 +969,7 @@ function Composer({
       <input
         type="text"
         value={inputMessage}
-        onChange={(event) => setInputMessage(event.target.value)}
+        onChange={(e) => setInputMessage(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={uploading ? "আপলোড হচ্ছে..." : "মেসেজ লিখুন..."}
         disabled={uploading}
@@ -858,11 +999,44 @@ function Composer({
   );
 }
 
+/* ---------------------- message processing ----------------------- */
+
+function processMessage(msg: any): ProcessedMessage {
+  const sender =
+    (msg.sender || msg.sender_type || "bot").toLowerCase() === "user"
+      ? "user"
+      : "bot";
+
+  const timestamp = msg.timestamp || msg.created_at || "";
+  let text = msg.text || "";
+  let images = normalizeImageList(msg.images);
+
+  // Fallback: if the store didn't populate images, extract them from the text
+  // field. Protocol-boundary splitting keeps Cloudinary transform commas intact;
+  // separator stripping prevents broken (404-ing) URLs from reaching the grid.
+  if (sender === "user" && images.length === 0 && text) {
+    const extracted = extractImageUrlsFromText(text);
+    if (extracted.length > 0) {
+      images = extracted;
+      text = "";
+    }
+  }
+
+  return {
+    ...msg,
+    sender,
+    timestamp,
+    text,
+    images,
+    content: sender === "bot" ? parseBotContent(text) : text,
+  };
+}
+
 /* ----------------------------- main ------------------------------ */
 
 export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
   const [inputMessage, setInputMessage] = useState("");
-  const [lightbox, setLightbox] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<LightboxState | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const {
@@ -896,54 +1070,11 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
   } = useAutoScroll(messages.length, isSending);
 
   useEffect(() => {
-    if (companyId) {
-      fetchHistory(companyId);
-    }
+    if (companyId) fetchHistory(companyId);
   }, [companyId, fetchHistory]);
 
-  const processedMessages: ProcessedMessage[] = useMemo(
-    () =>
-      messages.map((msg: any) => {
-        const sender =
-          (msg.sender || msg.sender_type || "bot").toLowerCase() === "user"
-            ? "user"
-            : "bot";
-
-        const timestamp = msg.timestamp || msg.created_at || "";
-        let text = msg.text || "";
-        let images: string[] = normalizeImageList(msg.images);
-
-        const isImageType =
-          String(msg.message_type || "").toLowerCase() === "image";
-
-        const looksLikeUrl = (value: string) =>
-          /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|avif|svg)(\?.*)?$/i.test(
-            value,
-          ) ||
-          value.includes("cloudinary.com") ||
-          value.includes("res.cloudinary");
-
-        if (sender === "user" && images.length === 0 && text) {
-          const parts = text
-            .split(",")
-            .map((part: string) => part.trim())
-            .filter(Boolean);
-
-          if (parts.every(looksLikeUrl) || isImageType) {
-            images = parts;
-            text = "";
-          }
-        }
-
-        return {
-          ...msg,
-          sender,
-          timestamp,
-          text,
-          images,
-          content: sender === "bot" ? parseBotContent(text) : text,
-        };
-      }),
+  const processedMessages = useMemo<ProcessedMessage[]>(
+    () => messages.map(processMessage),
     [messages],
   );
 
@@ -952,19 +1083,19 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
     !isSending &&
     !uploading;
 
+  const handleOpenImage = useCallback((all: string[], index: number) => {
+    setLightbox({ all, index });
+  }, []);
+
   const handleSend = useCallback(
     async (event: React.FormEvent) => {
       event.preventDefault();
-
       if (!canSend) return;
-
       const textToSend = inputMessage;
       const urls = readyUrls;
-
       setInputMessage("");
       clear();
       nearBottomRef.current = true;
-
       await sendMessage(companyId, textToSend, urls);
     },
     [
@@ -996,7 +1127,6 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
           <h3 className="truncate text-sm font-semibold leading-tight text-slate-800">
             Presswayy AI
           </h3>
-
           <span className="text-[11px] text-emerald-600">Online</span>
         </div>
 
@@ -1028,12 +1158,10 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
               <MessageBubble
                 key={msg.id ?? `${msg.timestamp}-${index}`}
                 msg={msg}
-                onOpenImage={setLightbox}
+                onOpenImage={handleOpenImage}
               />
             ))}
-
             {isSending && <TypingIndicator />}
-
             <div ref={bottomRef} />
           </div>
         )}
@@ -1066,10 +1194,8 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
         </div>
       )}
 
-      {/* Attachment preview */}
       <AttachmentPreview items={attachments} onRemove={remove} />
 
-      {/* Composer */}
       <Composer
         inputMessage={inputMessage}
         setInputMessage={setInputMessage}
@@ -1081,7 +1207,6 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
         onSubmit={handleSend}
       />
 
-      {/* Confirm delete dialog */}
       <ConfirmDialog
         open={confirmOpen}
         busy={isDeleting}
@@ -1089,9 +1214,12 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
         onCancel={() => setConfirmOpen(false)}
       />
 
-      {/* Lightbox */}
       {lightbox && (
-        <Lightbox src={lightbox} onClose={() => setLightbox(null)} />
+        <Lightbox
+          all={lightbox.all}
+          index={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
       )}
     </div>
   );

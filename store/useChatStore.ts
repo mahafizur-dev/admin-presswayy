@@ -40,7 +40,6 @@ const API = {
 
 const SESSION_KEY = "presswayy_chat_session_id";
 
-// Polling config: check every 1.5s, give up after 20s
 const POLL_INTERVAL_MS = 1500;
 const POLL_MAX_ATTEMPTS = 13;
 
@@ -53,6 +52,7 @@ const newId = (): string =>
 
 function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
   if (!raw || !raw.trim()) return fallback;
+
   try {
     return JSON.parse(raw) as T;
   } catch {
@@ -77,12 +77,47 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/* ------------------------- image helpers ------------------------- */
+/* ------------------------- image/text helpers -------------------- */
+
+function isImageUrl(value: string): boolean {
+  if (!value || typeof value !== "string") return false;
+
+  return (
+    /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|avif|svg)(\?.*)?$/i.test(value) ||
+    value.includes("cloudinary.com") ||
+    value.includes("res.cloudinary")
+  );
+}
+
+function cleanMessageText(value: unknown): string {
+  if (typeof value !== "string") return "";
+
+  const text = value.trim();
+
+  if (!text) return "";
+  if (text === "Attachment") return "";
+  if (isImageUrl(text)) return "";
+
+  return text;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(
+    new Set(
+      values
+        .filter((value) => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ),
+  );
+}
 
 function extractImageUrl(item: any): string | null {
   if (!item) return null;
 
-  if (typeof item === "string") return item;
+  if (typeof item === "string") {
+    return isImageUrl(item) ? item : null;
+  }
 
   return (
     item.image_url ||
@@ -95,44 +130,46 @@ function extractImageUrl(item: any): string | null {
 }
 
 function extractImagesFromArray(arr: any[]): string[] {
-  return arr.map(extractImageUrl).filter(Boolean) as string[];
+  return uniqueStrings(
+    arr.map(extractImageUrl).filter((url): url is string => Boolean(url)),
+  );
 }
 
 function extractImagesFromAttachments(rawAttachments: any): string[] {
   if (!rawAttachments) return [];
 
-  const atts =
-    typeof rawAttachments === "string"
-      ? safeJsonParse<any>(rawAttachments, null)
-      : rawAttachments;
+  let atts = rawAttachments;
+
+  if (typeof atts === "string") {
+    const parsed = safeJsonParse<any>(atts, null);
+
+    if (parsed) {
+      atts = parsed;
+    } else {
+      return isImageUrl(atts) ? [atts] : [];
+    }
+  }
 
   if (!atts) return [];
 
-  // New DB format:
-  // { image_urls: [{ image_url: "https://..." }] }
   if (Array.isArray(atts.image_urls)) {
     return extractImagesFromArray(atts.image_urls);
   }
 
-  // Legacy / incoming format:
-  // { attachments: [{ url: "https://..." }] }
   if (Array.isArray(atts.attachments)) {
     return extractImagesFromArray(atts.attachments);
   }
 
-  // Alternative format:
-  // { images: [{ image_url: "https://..." }] }
   if (Array.isArray(atts.images)) {
     return extractImagesFromArray(atts.images);
   }
 
-  // Direct array format:
-  // [{ image_url: "https://..." }]
   if (Array.isArray(atts)) {
     return extractImagesFromArray(atts);
   }
 
-  return [];
+  const singleUrl = extractImageUrl(atts);
+  return singleUrl ? [singleUrl] : [];
 }
 
 /* ------------------------- response parsing ---------------------- */
@@ -141,7 +178,6 @@ function extractRows(data: unknown): any[] {
   if (!data) return [];
 
   if (Array.isArray(data)) {
-    // Unwrap single-element wrapper objects like [{ data: [...] }]
     if (data.length === 1 && data[0] && typeof data[0] === "object") {
       const inner =
         data[0].output ??
@@ -171,8 +207,15 @@ function extractRows(data: unknown): any[] {
       if (Array.isArray(o[key])) return o[key];
     }
 
-    // Single object that looks like a message row
-    if (o.message_text || o.text || o.message || o.content || o.msg) {
+    if (
+      o.message_text ||
+      o.text ||
+      o.message ||
+      o.content ||
+      o.msg ||
+      o.metadata ||
+      o.attachments
+    ) {
       return [o];
     }
   }
@@ -180,17 +223,27 @@ function extractRows(data: unknown): any[] {
   return [];
 }
 
-function parseUserContent(raw: string): { text: string; images?: string[] } {
-  const t = (raw || "").trim();
+function parseUserContent(raw: unknown): { text: string; images?: string[] } {
+  const value = typeof raw === "string" ? raw.trim() : "";
 
-  if (!t.startsWith("[") && !t.startsWith("{")) {
-    return { text: raw };
+  if (!value) {
+    return { text: "" };
   }
 
-  const parsed = safeJsonParse<any>(t, null);
+  if (!value.startsWith("[") && !value.startsWith("{")) {
+    return {
+      text: cleanMessageText(value),
+      images: isImageUrl(value) ? [value] : undefined,
+    };
+  }
+
+  const parsed = safeJsonParse<any>(value, null);
 
   if (parsed == null) {
-    return { text: raw };
+    return {
+      text: cleanMessageText(value),
+      images: isImageUrl(value) ? [value] : undefined,
+    };
   }
 
   const arr = Array.isArray(parsed) ? parsed : [parsed];
@@ -199,19 +252,54 @@ function parseUserContent(raw: string): { text: string; images?: string[] } {
   const images: string[] = [];
 
   for (const item of arr) {
-    if (item?.message && !text) {
-      text = item.message;
+    const replyType = String(item?.reply_type || "").toLowerCase();
+
+    const possibleText =
+      item?.message ||
+      item?.message_text ||
+      item?.text ||
+      item?.content ||
+      item?.msg ||
+      "";
+
+    const cleanText = cleanMessageText(possibleText);
+
+    if (cleanText && replyType !== "image" && !text) {
+      text = cleanText;
     }
 
     if (Array.isArray(item?.images)) {
       images.push(...extractImagesFromArray(item.images));
     }
+
+    const singleImage = extractImageUrl(item);
+
+    if (singleImage) {
+      images.push(singleImage);
+    }
   }
 
   return {
     text,
-    images: images.length ? images : undefined,
+    images: images.length ? uniqueStrings(images) : undefined,
   };
+}
+
+function rowHasRenderableContent(row: any): boolean {
+  return Boolean(
+    row &&
+    (row.message_text ||
+      row.text ||
+      row.message ||
+      row.content ||
+      row.msg ||
+      row.message_type ||
+      row.images ||
+      row.attachments ||
+      row.metadata?.legacy_context?.saveText ||
+      row.metadata?.entry?.[0]?.messaging?.[0]?.message?.text ||
+      row.metadata?.entry?.[0]?.messaging?.[0]?.message?.attachments),
+  );
 }
 
 function mapRowToMessage(row: any): Message {
@@ -231,34 +319,52 @@ function mapRowToMessage(row: any): Message {
 
   let images: string[] = [];
 
-  // 1. Dedicated images column
   if (Array.isArray(row.images)) {
     images = extractImagesFromArray(row.images);
   }
 
-  // 2. JSON / JSONB attachments column
-  if (images.length === 0 && row.attachments) {
-    images = extractImagesFromAttachments(row.attachments);
+  if (row.attachments) {
+    images = uniqueStrings([
+      ...images,
+      ...extractImagesFromAttachments(row.attachments),
+    ]);
   }
 
-  // 3. User image fallback
   if (sender === "user") {
-    const isImageMsg = String(row.message_type || "").toLowerCase() === "image";
+    const messengerMessage =
+      row.metadata?.entry?.[0]?.messaging?.[0]?.message || {};
 
-    if (isImageMsg && rawText && images.length === 0) {
-      // text column holds the image URL directly
-      images = [rawText];
-      rawText = "";
-    } else {
-      // Legacy JSON format fallback
-      const { text: parsedText, images: parsedImages } =
-        parseUserContent(rawText);
+    const legacySaveText =
+      row.metadata?.legacy_context?.saveText ||
+      row.metadata?.legacy_context?.save_text ||
+      row.legacy_context?.saveText ||
+      row.saveText ||
+      "";
 
-      if (parsedImages && parsedImages.length > 0) {
-        images = parsedImages;
-        rawText = parsedText;
-      }
-    }
+    const parsedRawText = parseUserContent(rawText);
+    const parsedLegacy = parseUserContent(legacySaveText);
+
+    const messengerText = cleanMessageText(messengerMessage.text || "");
+
+    const messengerImages = Array.isArray(messengerMessage.attachments)
+      ? messengerMessage.attachments
+          .map((att: any) => att?.payload?.url || att?.url || att?.image_url)
+          .filter(Boolean)
+      : [];
+
+    images = uniqueStrings([
+      ...images,
+      ...(parsedRawText.images || []),
+      ...(parsedLegacy.images || []),
+      ...messengerImages,
+    ]);
+
+    rawText =
+      messengerText ||
+      parsedLegacy.text ||
+      parsedRawText.text ||
+      cleanMessageText(rawText) ||
+      "";
   }
 
   return {
@@ -351,27 +457,9 @@ async function apiDeleteHistory(
 /* ----------------------- polling helper -------------------------- */
 
 function filterAndMapRows(data: unknown): Message[] {
-  return extractRows(data)
-    .filter(
-      (row) =>
-        row &&
-        (row.message_text ||
-          row.text ||
-          row.message ||
-          row.content ||
-          row.msg ||
-          row.message_type ||
-          row.images ||
-          row.attachments),
-    )
-    .map(mapRowToMessage);
+  return extractRows(data).filter(rowHasRenderableContent).map(mapRowToMessage);
 }
 
-/**
- * Polls until the DB has more bot messages than `botCountBefore`.
- * Uses message count — NOT timestamps — to avoid client/server
- * timezone mismatches that cause the typing indicator to get stuck.
- */
 async function pollForBotReply(
   companyId: string,
   sessionId: string,
@@ -451,18 +539,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       console.log("[ChatStore] Fetched row count:", rawRows.length);
 
       const messages = rawRows
-        .filter(
-          (row) =>
-            row &&
-            (row.message_text ||
-              row.text ||
-              row.message ||
-              row.content ||
-              row.msg ||
-              row.message_type ||
-              row.images ||
-              row.attachments),
-        )
+        .filter(rowHasRenderableContent)
         .map(mapRowToMessage);
 
       set({ messages });
@@ -492,7 +569,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const sentAt = new Date().toISOString();
     const generatedMessageId = `m_${newId().replace(/-/g, "")}`;
 
-    // 1. Optimistically add the user message immediately
     const userMessage: Message = {
       id: newId(),
       sender: "user",
@@ -508,7 +584,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     try {
-      // 2. Build the Messenger-shaped payload n8n expects
       const messengerAttachments: MessengerAttachment[] | undefined =
         attachments.length > 0
           ? attachments.map((url) => ({
@@ -544,17 +619,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         },
       };
 
-      // 3. Snapshot bot count BEFORE the POST so polling can detect the new reply
       const botCountBefore = get().messages.filter(
         (m) => m.sender === "bot",
       ).length;
 
-      // 4. Fire the POST — n8n processes async, response body is not useful
       await apiSendMessage(
         messengerPayload as unknown as Record<string, unknown>,
       );
 
-      // 5. Poll the DB until a new bot message appears
       await pollForBotReply(
         companyId,
         sId,
@@ -575,10 +647,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           error instanceof Error ? error.message : "মেসেজ পাঠানো ব্যর্থ হয়েছে",
       });
 
-      // On error, do a single fetch to sync state with DB
       await get().fetchHistory(companyId);
     } finally {
-      // Always ensure isSending is cleared
       set({ isSending: false });
     }
   },

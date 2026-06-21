@@ -183,11 +183,13 @@ function useAttachments() {
 
   const clear = useCallback(() => setAttachments([]), []);
 
-  const addFiles = useCallback(
-    async (files: FileList | null) => {
-      if (!files || files.length === 0) return;
+  // Core uploader: accepts File[] from any source (file picker OR paste/blob)
+  // and runs each through the same Cloudinary pipeline.
+  const addFileArray = useCallback(
+    async (files: File[]) => {
+      if (!files.length) return;
       const slots = Math.max(0, MAX_ATTACHMENTS - attachments.length);
-      const picked = Array.from(files).slice(0, slots);
+      const picked = files.slice(0, slots);
 
       for (const file of picked) {
         if (!file.type.startsWith("image/")) continue;
@@ -203,18 +205,55 @@ function useAttachments() {
 
         setAttachments((prev) => [
           ...prev,
-          { id, preview, status: "uploading", name: file.name },
+          {
+            id,
+            preview,
+            status: "uploading",
+            name: file.name || "pasted-image",
+          },
         ]);
 
         uploadToCloudinary(file)
           .then((url) => update(id, { url, status: "done" }))
           .catch(() => update(id, { status: "error" }));
       }
-
-      if (fileInputRef.current) fileInputRef.current.value = "";
     },
     [attachments.length, update],
   );
+
+  const addFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      await addFileArray(Array.from(files));
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    },
+    [addFileArray],
+  );
+
+  // A pasted image URL is already hosted — add it directly as a "done"
+  // attachment without re-uploading. Returns whether it was accepted.
+  const addImageUrl = useCallback((url: string): boolean => {
+    const clean = url.trim();
+    if (!clean || !looksLikeImageUrl(clean)) return false;
+
+    let accepted = false;
+    setAttachments((prev) => {
+      if (prev.length >= MAX_ATTACHMENTS) return prev;
+      if (prev.some((a) => a.url === clean)) return prev; // skip duplicates
+      accepted = true;
+      return [
+        ...prev,
+        {
+          id: localId(),
+          preview: clean,
+          url: clean,
+          status: "done",
+          name: "pasted-url",
+        },
+      ];
+    });
+    return accepted;
+  }, []);
 
   const uploading = attachments.some((item) => item.status === "uploading");
 
@@ -230,6 +269,8 @@ function useAttachments() {
     attachments,
     fileInputRef,
     addFiles,
+    addFileArray,
+    addImageUrl,
     remove,
     clear,
     uploading,
@@ -244,7 +285,10 @@ function useAutoScroll(trigger: number, isSending: boolean) {
   const [showJump, setShowJump] = useState(false);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    bottomRef.current?.scrollIntoView({ behavior });
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior });
+    }
     setShowJump(false);
   }, []);
 
@@ -914,6 +958,7 @@ function Composer({
   attachmentCount,
   fileInputRef,
   onPickFiles,
+  onPaste,
   onSubmit,
 }: {
   inputMessage: string;
@@ -923,6 +968,7 @@ function Composer({
   attachmentCount: number;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   onPickFiles: (files: FileList | null) => void;
+  onPaste: (event: React.ClipboardEvent) => void;
   onSubmit: (event: React.FormEvent) => void;
 }) {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -971,6 +1017,7 @@ function Composer({
         value={inputMessage}
         onChange={(e) => setInputMessage(e.target.value)}
         onKeyDown={handleKeyDown}
+        onPaste={onPaste}
         placeholder={uploading ? "আপলোড হচ্ছে..." : "মেসেজ লিখুন..."}
         disabled={uploading}
         className="flex-1 rounded-full border border-slate-200 bg-slate-50 px-4 py-2.5 text-[13px] text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed"
@@ -1054,6 +1101,8 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
     attachments,
     fileInputRef,
     addFiles,
+    addFileArray,
+    addImageUrl,
     remove,
     clear,
     uploading,
@@ -1086,6 +1135,46 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
   const handleOpenImage = useCallback((all: string[], index: number) => {
     setLightbox({ all, index });
   }, []);
+
+  // Paste-to-attach: handles both real image blobs (screenshots / copied images)
+  // and copied image URLs. Anything else falls through to normal text paste.
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      const dt = e.clipboardData;
+      if (!dt) return;
+
+      // 1) Real image file/blob in the clipboard
+      const imageFiles: File[] = [];
+      if (dt.files && dt.files.length) {
+        for (const f of Array.from(dt.files)) {
+          if (f.type.startsWith("image/")) imageFiles.push(f);
+        }
+      }
+      if (imageFiles.length === 0 && dt.items) {
+        for (const item of Array.from(dt.items)) {
+          if (item.kind === "file" && item.type.startsWith("image/")) {
+            const f = item.getAsFile();
+            if (f) imageFiles.push(f);
+          }
+        }
+      }
+
+      if (imageFiles.length > 0) {
+        e.preventDefault(); // stop binary junk from landing in the text box
+        void addFileArray(imageFiles);
+        return;
+      }
+
+      // 2) Pasted text that is itself an image URL
+      const pastedText = dt.getData("text")?.trim();
+      if (pastedText && looksLikeImageUrl(pastedText)) {
+        const added = addImageUrl(pastedText);
+        if (added) e.preventDefault(); // keep the URL out of the text input
+      }
+      // Otherwise: do nothing — let normal text paste proceed.
+    },
+    [addFileArray, addImageUrl],
+  );
 
   const handleSend = useCallback(
     async (event: React.FormEvent) => {
@@ -1204,6 +1293,7 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
         attachmentCount={attachments.length}
         fileInputRef={fileInputRef}
         onPickFiles={addFiles}
+        onPaste={handlePaste}
         onSubmit={handleSend}
       />
 

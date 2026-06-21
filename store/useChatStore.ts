@@ -89,6 +89,32 @@ function isImageUrl(value: string): boolean {
   );
 }
 
+// একটি text field-এ এক বা একাধিক image URL থাকতে পারে (কমা/whitespace-সেপারেটেড)।
+// Cloudinary transform কমা (f_auto,q_auto) যাতে না ভাঙে তাই protocol boundary (https://)-তে
+// split করি, তারপর প্রতিটি fragment থেকে trailing কমা/সেমিকোলন/space ছেঁটে validate করি।
+// একটিমাত্র URL থাকলেও এটি কাজ করে, আবার "url1, url2" কে দুটি আলাদা URL-এ ভাঙে —
+// যাতে যৌথ string কখনো single <img src> হিসেবে ঢুকে 404 না করে।
+function splitImageUrls(value: string): string[] {
+  if (typeof value !== "string") return [];
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+
+  const protocolCount = (trimmed.match(/https?:\/\//g) || []).length;
+  if (protocolCount === 0) return [];
+
+  const fragments =
+    protocolCount === 1 ? [trimmed] : trimmed.split(/(?=https?:\/\/)/);
+
+  return fragments
+    .map((f) =>
+      f
+        .trim()
+        .replace(/[,;\s]+$/, "")
+        .trim(),
+    )
+    .filter(isImageUrl);
+}
+
 function cleanMessageText(value: unknown): string {
   if (typeof value !== "string") return "";
 
@@ -97,6 +123,8 @@ function cleanMessageText(value: unknown): string {
   if (!text) return "";
   if (text === "Attachment") return "";
   if (isImageUrl(text)) return "";
+  // multi-URL string হলে এটা টেক্সট নয় — খালি ফেরাই, যাতে bubble-এ URL টেক্সট না দেখায়
+  if (splitImageUrls(text).length > 0) return "";
 
   return text;
 }
@@ -146,7 +174,8 @@ function extractImagesFromAttachments(rawAttachments: any): string[] {
     if (parsed) {
       atts = parsed;
     } else {
-      return isImageUrl(atts) ? [atts] : [];
+      // string হলে এটি এক বা একাধিক URL হতে পারে — protocol boundary-তে split করি
+      return splitImageUrls(atts);
     }
   }
 
@@ -231,18 +260,21 @@ function parseUserContent(raw: unknown): { text: string; images?: string[] } {
   }
 
   if (!value.startsWith("[") && !value.startsWith("{")) {
+    // plain string: এক বা একাধিক image URL হতে পারে (কমা-সেপারেটেড সহ)
+    const urls = splitImageUrls(value);
     return {
-      text: cleanMessageText(value),
-      images: isImageUrl(value) ? [value] : undefined,
+      text: urls.length ? "" : cleanMessageText(value),
+      images: urls.length ? urls : undefined,
     };
   }
 
   const parsed = safeJsonParse<any>(value, null);
 
   if (parsed == null) {
+    const urls = splitImageUrls(value);
     return {
-      text: cleanMessageText(value),
-      images: isImageUrl(value) ? [value] : undefined,
+      text: urls.length ? "" : cleanMessageText(value),
+      images: urls.length ? urls : undefined,
     };
   }
 

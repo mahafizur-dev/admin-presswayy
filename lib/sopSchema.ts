@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 export const sopSchema = z.object({
-  // companyId সরাসরি ফর্ম বা ইউআরএল থেকে আসতে পারে, তাই এটি UUID ভ্যালিডেশন সহ যুক্ত করা হলো
   companyId: z.string().uuid("একটি সঠিক Company ID (UUID) প্রদান করুন"),
 
   businessName: z

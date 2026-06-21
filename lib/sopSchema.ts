@@ -65,7 +65,8 @@ export const sopSchema = z.object({
     .string()
     .trim()
     .min(2, "পেমেন্ট মেথড উল্লেখ করুন")
-    .max(100, "1০০ অক্ষরের বেশি হতে পারবে না"),
+    .max(100, "1০০ অক্ষরের বেশি হতে পারবে না")
+    .optional(),
   imageGuidelines: z.string().trim().min(5, "ইমেজ গাইডলাইন দিন"),
   allowNegotiation: z.string().refine((val) => ["Yes", "No"].includes(val), {
     message: "অনুগ্রহ করে নির্বাচন করুন",
@@ -107,6 +108,14 @@ export const sopSchema = z.object({
 
 export type SOPFormData = z.infer<typeof sopSchema>;
 
+// delivery_charge_* কলাম DB-তে NOT NULL DEFAULT 0।
+// explicit null পাঠালে DEFAULT কাজ করে না → NOT NULL ভঙ্গ হয়।
+// তাই খালি/অবৈধ হলে null নয়, 0 পাঠাই; বৈধ সংখ্যা হলে সেটিই।
+const toCharge = (v?: string): number => {
+  const n = Number((v ?? "").trim());
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+};
+
 // ফর্মের ডেটা (camelCase) কে ডেটাবেসের ফরম্যাটে (snake_case) রূপান্তর করার হেল্পার ফাংশন
 export const transformSOPDataToSQL = (data: SOPFormData) => {
   return {
@@ -135,12 +144,8 @@ export const transformSOPDataToSQL = (data: SOPFormData) => {
     out_of_stock_reply: data.outOfStockReply,
     delivery_time_inside_dhaka: data.deliveryTimeInsideDhaka,
     delivery_time_outside_dhaka: data.deliveryTimeOutsideDhaka,
-    delivery_charge_inside_dhaka: data.deliveryChargeInsideDhaka
-      ? Number(data.deliveryChargeInsideDhaka)
-      : null,
-    delivery_charge_outside_dhaka: data.deliveryChargeOutsideDhaka
-      ? Number(data.deliveryChargeOutsideDhaka)
-      : null,
+    delivery_charge_inside_dhaka: toCharge(data.deliveryChargeInsideDhaka),
+    delivery_charge_outside_dhaka: toCharge(data.deliveryChargeOutsideDhaka),
   };
 };
 

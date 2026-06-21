@@ -285,6 +285,10 @@ function useAutoScroll(trigger: number, isSending: boolean) {
   const [showJump, setShowJump] = useState(false);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    // NOTE: scrollIntoView() also scrolls the page/window (the nearest
+    // scrollable ancestors), which made the sticky side-by-side SOP form
+    // jump whenever a new bot reply arrived. Scroll ONLY the chat's own
+    // container so the surrounding page never moves.
     const el = scrollRef.current;
     if (el) {
       el.scrollTo({ top: el.scrollHeight, behavior });
@@ -421,14 +425,18 @@ function TokenCostBadge({ cost }: { cost?: RawCost }) {
 
 /* ----------------------- image grid system ----------------------- */
 
+// Shared loading/error wrapper for grid tiles.
+// fit="cover" fills the slot (may crop) — used for multi-image grid tiles.
 function ChatImage({
   src,
   onOpen,
   dimmed = false,
+  fit = "cover",
 }: {
   src: string;
   onOpen: () => void;
   dimmed?: boolean;
+  fit?: "cover" | "contain";
 }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -462,13 +470,75 @@ function ChatImage({
         alt="content"
         onLoad={() => setLoaded(true)}
         onError={() => setFailed(true)}
-        className={`h-full w-full object-cover transition-opacity duration-300 ${
-          dimmed ? "brightness-[0.4]" : ""
-        } ${loaded && !failed ? "opacity-100" : "opacity-0"}`}
+        className={`h-full w-full transition-opacity duration-300 ${
+          fit === "contain" ? "object-contain" : "object-cover"
+        } ${dimmed ? "brightness-[0.4]" : ""} ${
+          loaded && !failed ? "opacity-100" : "opacity-0"
+        }`}
       />
 
       {loaded && !failed && !dimmed && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors duration-150 group-hover:bg-black/25">
+          <svg
+            viewBox="0 0 24 24"
+            className="h-5 w-5 text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.35-4.35M11 8v6M8 11h6" />
+          </svg>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Single-image, Messenger-style: keeps the image's natural aspect ratio,
+// bounded only by max width/height. No fixed-height box → no cropping and no
+// empty letterbox padding. Includes the same spinner / error fallback.
+function SingleChatImage({ src, onOpen }: { src: string; onOpen: () => void }) {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setLoaded(false);
+    setFailed(false);
+  }, [src]);
+
+  if (!src) return null;
+
+  if (failed) {
+    return (
+      <div className="flex h-32 w-44 items-center justify-center rounded-xl bg-slate-100 text-[10px] text-slate-400">
+        ছবি লোড হয়নি
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="group relative inline-block overflow-hidden rounded-xl"
+      onClick={onOpen}
+      style={{ cursor: "zoom-in" }}
+    >
+      {!loaded && (
+        <div className="h-44 w-44 animate-pulse rounded-xl bg-slate-200" />
+      )}
+      <img
+        src={src}
+        alt="content"
+        onLoad={() => setLoaded(true)}
+        onError={() => setFailed(true)}
+        className={`block max-h-72 w-auto max-w-full rounded-xl object-contain transition-opacity duration-300 ${
+          loaded ? "opacity-100" : "absolute inset-0 h-full w-full opacity-0"
+        }`}
+      />
+      {loaded && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors duration-150 group-hover:bg-black/20">
           <svg
             viewBox="0 0 24 24"
             className="h-5 w-5 text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100"
@@ -495,7 +565,6 @@ function gridTemplateColumns(count: number): string {
 }
 
 function slotHeight(count: number, index: number): string {
-  if (count === 1) return "h-40";
   if (count === 2) return "h-28";
   // count === 3: left slot spans 2 rows — grid row heights (set by right slots) control it
   if (count === 3) return index === 0 ? "" : "h-20";
@@ -518,6 +587,16 @@ function MessageImageGrid({
   const clean = normalizeImageList(images);
   if (clean.length === 0) return null;
 
+  // ── Single image: Messenger-style natural aspect ratio (no crop, no box)
+  if (clean.length === 1) {
+    return (
+      <div className={className}>
+        <SingleChatImage src={clean[0]} onOpen={() => onOpenImage(clean, 0)} />
+      </div>
+    );
+  }
+
+  // ── Multiple images: cover grid
   const shown = clean.slice(0, GRID_MAX);
   const overflow = clean.length - GRID_MAX;
 

@@ -1,5 +1,3 @@
-import SOPTable from "@/components/SOPTable";
-
 async function getSops() {
   try {
     const response = await fetch(
@@ -28,7 +26,6 @@ export default async function SOPPage() {
   return (
     <div className="p-8">
       <h1 className="text-2xl font-bold mb-6">SOP Records</h1>
-      <SOPTable data={data} />
     </div>
   );
 }

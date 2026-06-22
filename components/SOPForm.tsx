@@ -94,12 +94,12 @@ const FIELD_CONFIG: FieldConfig[] = [
     required: true,
   },
 
-  // ----- AI ব্যক্তিত্ব -----
+  // ----- AI কনফিগারেশন -----
   {
     id: "requiredAiBehavior",
     label: "AI Behavior - AI কীভাবে কথা বলবে নির্বাচন করুন *",
     type: "select",
-    group: "AI ব্যক্তিত্ব",
+    group: "AI কনফিগারেশন",
     placeholder: "AI-এর আচরণ নির্বাচন করুন",
     options: ["Friendly", "Professional", "Casual", "Formal"],
     default: "Friendly",
@@ -109,7 +109,7 @@ const FIELD_CONFIG: FieldConfig[] = [
     id: "aiName",
     label: "AI Name - আপনার AI-এর নাম লিখুন *",
     type: "input",
-    group: "AI ব্যক্তিত্ব",
+    group: "AI কনফিগারেশন",
     placeholder: "যেমন: Sadia, Jasa, Emad",
     required: true,
   },
@@ -117,7 +117,7 @@ const FIELD_CONFIG: FieldConfig[] = [
     id: "replyLanguage",
     label: "Language - AI কোন ভাষায় রিপ্লাই দেবে নির্বাচন করুন *",
     type: "select",
-    group: "AI ব্যক্তিত্ব",
+    group: "AI কনফিগারেশন",
     placeholder: "ভাষা নির্বাচন করুন",
     options: ["Bangla", "English"],
     required: true,
@@ -126,7 +126,7 @@ const FIELD_CONFIG: FieldConfig[] = [
     id: "useEmoji",
     label: "Use Emoji - রিপ্লাইতে ইমোজি ব্যবহার করবে কি? *",
     type: "select",
-    group: "AI ব্যক্তিত্ব",
+    group: "AI কনফিগারেশন",
     placeholder: "ইমোজি ব্যবহার নির্বাচন করুন",
     options: ["Yes", "No"],
     default: "Yes",
@@ -135,7 +135,7 @@ const FIELD_CONFIG: FieldConfig[] = [
     id: "addressingStyle",
     label: "Addressing Style - কাস্টমারকে কীভাবে সম্বোধন করবে নির্বাচন করুন *",
     type: "select",
-    group: "AI ব্যক্তিত্ব",
+    group: "AI কনফিগারেশন",
     placeholder: "সম্বোধনের ধরন নির্বাচন করুন",
     options: ["Sir-Mam", "Bhaiya-Apu"],
     required: true,
@@ -144,7 +144,7 @@ const FIELD_CONFIG: FieldConfig[] = [
     id: "greetingStyle",
     label: "Greeting Style - AI কীভাবে শুভেচ্ছা জানাবে নির্বাচন করুন *",
     type: "select",
-    group: "AI ব্যক্তিত্ব",
+    group: "AI কনফিগারেশন",
     placeholder: "শুভেচ্ছার ধরন নির্বাচন করুন",
     options: ["Hi", "Hello", "Assalamu Alaikum"],
     required: true,
@@ -153,7 +153,7 @@ const FIELD_CONFIG: FieldConfig[] = [
     id: "responseLength",
     label: "Response Length - রিপ্লাই কতটা বড় হবে নির্বাচন করুন *",
     type: "select",
-    group: "AI ব্যক্তিত্ব",
+    group: "AI কনফিগারেশন",
     placeholder: "রিপ্লাইয়ের দৈর্ঘ্য নির্বাচন করুন",
     options: ["short", "medium", "long"],
     required: true,
@@ -294,7 +294,7 @@ const FIELD_CONFIG: FieldConfig[] = [
 // প্রতিটি group-এর আইকন
 const GROUP_ICONS: Record<string, React.ReactNode> = {
   "ব্যবসার তথ্য": <path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4" />,
-  "AI ব্যক্তিত্ব": (
+  "AI কনফিগারেশন": (
     <path d="M12 8V4M8 2h8M3 11h18M5 11v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9M9 16h.01M15 16h.01" />
   ),
   "অর্ডার ও প্রাইসিং": (

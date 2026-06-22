@@ -4,26 +4,28 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File;
+    const companyId = formData.get("companyId") as string; // <-- client "companyId" পাঠায়
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
 
-   
+    if (!companyId) {
+      return NextResponse.json(
+        { error: "No companyId provided" },
+        { status: 400 },
+      );
+    }
+
     const forwardFormData = new FormData();
     forwardFormData.append("file", file);
-
-    forwardFormData.append(
-      "company_id",
-      "f1767d60-ac8c-485a-b89a-ab739cf48f5f",
-    );
+    forwardFormData.append("company_id", companyId); // <-- webhook "company_id" চায়
 
     const externalResponse = await fetch(
       "https://server.presswayy.com/webhook/product-inventory",
       {
         method: "POST",
         body: forwardFormData,
-        // If the webhook requires a token, safely fetch it from your server environment variables here
         headers: {
           // 'Authorization': `Bearer ${process.env.PRESSWAYY_API_KEY}`,
         },

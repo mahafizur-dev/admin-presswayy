@@ -1161,6 +1161,7 @@ function processMessage(msg: any): ProcessedMessage {
 /* ----------------------------- main ------------------------------ */
 
 export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
+  const [mounted, setMounted] = useState(false);
   const [inputMessage, setInputMessage] = useState("");
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -1197,9 +1198,15 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
     onScroll,
   } = useAutoScroll(messages.length, isSending);
 
+  // Mark client-mounted. localStorage-dependent work (session id, history fetch)
+  // must only run after this so server and first client render stay identical.
   useEffect(() => {
-    if (companyId) fetchHistory(companyId);
-  }, [companyId, fetchHistory]);
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (mounted && companyId) fetchHistory(companyId);
+  }, [mounted, companyId, fetchHistory]);
 
   const processedMessages = useMemo<ProcessedMessage[]>(
     () => messages.map(processMessage),
@@ -1282,6 +1289,16 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
     setConfirmOpen(false);
   }, [clearChats, companyId]);
 
+  // Until mounted, render a stable shell identical on server & first client
+  // render — prevents hydration mismatch from localStorage/session-driven state.
+  if (!mounted) {
+    return (
+      <div className="relative mx-auto flex h-[62vh] max-h-[540px] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:h-[540px]">
+        <LoadingState />
+      </div>
+    );
+  }
+
   return (
     <div className="relative mx-auto flex h-[62vh] max-h-[540px] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:h-[540px]">
       {/* Header */}
@@ -1301,9 +1318,9 @@ export default function ChatbotInterface({ companyId }: ChatbotInterfaceProps) {
         <button
           type="button"
           onClick={() => setConfirmOpen(true)}
-          disabled={
-            messages.length === 0 || isDeleting || isSending || isFetching
-          }
+          disabled={Boolean(
+            messages.length === 0 || isDeleting || isSending || isFetching,
+          )}
           className="flex shrink-0 items-center gap-1 rounded-full border border-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
         >
           Clear chat

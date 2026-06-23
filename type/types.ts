@@ -17,7 +17,7 @@ export interface MessengerEvent {
 }
 
 export interface MessengerPayload {
-  object: "page";
+  object: "chatbot";
   entry: [
     {
       id: string;

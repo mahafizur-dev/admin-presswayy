@@ -625,7 +625,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           : undefined;
 
       const messengerPayload: MessengerPayload = {
-        object: "page",
+        object: "chatbot",
         entry: [
           {
             id: companyId,

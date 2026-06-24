@@ -12,7 +12,6 @@ import {
   AlertCircle,
 } from "lucide-react";
 
-// টাইপ ডেফিনিশন (TypeScript)
 interface OrderField {
   id?: string;
   company_id: string;
@@ -20,7 +19,7 @@ interface OrderField {
   field_label: string;
   question_text: string;
   field_type: string;
-  field_options: string | null; // JSON string
+  field_options: string | null;
   is_required: boolean;
   display_order: number;
   is_active: boolean;
@@ -31,7 +30,6 @@ interface Company {
   name: string;
 }
 
-// ডিফল্ট ফিল্ড কী এর তালিকা
 const DEFAULT_FIELD_KEYS = [
   "product_name",
   "status",
@@ -62,12 +60,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // কাস্টম ফিল্ড কী স্টেট
   const [customKeys, setCustomKeys] = useState<string[]>([]);
   const [isAddingCustomKey, setIsAddingCustomKey] = useState(false);
   const [customKeyInput, setCustomKeyInput] = useState("");
 
-  // ফর্ম স্টেট
   const [formData, setFormData] = useState<OrderField>({
     company_id: "",
     field_key: "",
@@ -80,7 +76,6 @@ export default function App() {
     is_active: true,
   });
 
-  // ১. পেজ লোড হওয়ার সাথে সাথে কোম্পানিগুলো ফেচ করা
   useEffect(() => {
     const fetchCompanies = async () => {
       try {
@@ -110,7 +105,6 @@ export default function App() {
     fetchCompanies();
   }, []);
 
-  // ২. ফিল্ডগুলো ফেচ করার ফাংশনকে আলাদা করা হলো
   const fetchCompanyFields = async (companyId: string) => {
     setFetchLoading(true);
     try {
@@ -142,7 +136,6 @@ export default function App() {
     }
   };
 
-  // ৩. কোম্পানি সিলেক্ট হলে ফিল্ডগুলো ফেচ করা
   useEffect(() => {
     if (!selectedCompanyId) {
       setFields([]);
@@ -153,7 +146,6 @@ export default function App() {
     fetchCompanyFields(selectedCompanyId);
   }, [selectedCompanyId]);
 
-  // ইনপুট চেঞ্জ হ্যান্ডলার
   const handleChange = (
     e: React.ChangeEvent<
       HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
@@ -168,7 +160,7 @@ export default function App() {
     }
   };
 
-  // ফর্ম রিসেট
+
   const resetForm = () => {
     setFormData({
       company_id: selectedCompanyId,
@@ -186,7 +178,6 @@ export default function App() {
     setCustomKeyInput("");
   };
 
-  // অ্যাড/এডিট মোড ওপেন করা
   const openModal = (field?: OrderField) => {
     if (field) {
       const optionsStr =
@@ -196,7 +187,6 @@ export default function App() {
 
       setFormData({ ...field, field_options: optionsStr as string });
 
-      // এডিট করার সময় যদি key ডিফল্ট লিস্টে না থাকে, তবে কাস্টম লিস্টে যোগ করে দেওয়া
       if (
         field.field_key &&
         !DEFAULT_FIELD_KEYS.includes(field.field_key) &&

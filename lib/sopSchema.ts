@@ -57,10 +57,8 @@ export const sopSchema = z.object({
       message: "রেসপন্স এর দৈর্ঘ্য নির্বাচন করুন",
     }),
 
-  orderProcess: z
-    .string()
-    .trim()
-    .min(5, "অর্ডার প্রসেস সম্পর্কে বিস্তারিত লিখুন"),
+  // NOTE: orderProcess (free-text) সরানো হয়েছে — অর্ডার তথ্য এখন
+  // schema-based Order Definition System (order_field_definitions) দিয়ে নির্ধারিত হয়।
   paymentMethod: z
     .string()
     .trim()
@@ -130,7 +128,7 @@ export const transformSOPDataToSQL = (data: SOPFormData) => {
     addressing_style: data.addressingStyle,
     greeting_style: data.greetingStyle,
     response_length: data.responseLength,
-    order_process: data.orderProcess,
+    // order_process সরানো হয়েছে
     payment_method: data.paymentMethod,
     image_guidelines: data.imageGuidelines,
     allow_negotiation: data.allowNegotiation === "Yes", // String থেকে Boolean এ কনভার্ট
@@ -163,7 +161,7 @@ export const transformSQLToSOPData = (dbData: any): SOPFormData => {
     addressingStyle: dbData.addressing_style || "",
     greetingStyle: dbData.greeting_style || "",
     responseLength: dbData.response_length || "",
-    orderProcess: dbData.order_process || "",
+    // orderProcess সরানো হয়েছে
     paymentMethod: dbData.payment_method || "",
     imageGuidelines: dbData.image_guidelines || "",
     allowNegotiation: dbData.allow_negotiation ? "Yes" : "No",

@@ -4,6 +4,16 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import {
+  Plus,
+  Edit2,
+  Trash2,
+  X,
+  Save,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+} from "lucide-react";
 import { useSopStore } from "../store/useSopStore";
 
 interface SOPFormProps {
@@ -33,19 +43,614 @@ interface CustomField {
   value: string;
 }
 
-/*
- * required: true → DB-তে NOT NULL এবং কোনো DEFAULT নেই, তাই user-কে দিতেই হবে।
- * নিচের ১৫টি ফিল্ড business_sops টেবিলের NOT-NULL-without-default কলামের সাথে মেলে:
- *   company_id, business_name, business_type, business_overview,
- *   required_ai_behavior, ai_name, reply_language, addressing_style,
- *   greeting_style, response_length, order_process, payment_method,
- *   image_guidelines, delivery_time_inside_dhaka, delivery_time_outside_dhaka
- *
- * use_emoji / allow_negotiation / delivery_charge_* → NOT NULL কিন্তু DEFAULT আছে,
- * তাই required নয় (transformSOPDataToSQL এদের জন্য বুলিয়ান/0 পাঠায়, null নয়)।
- * negotiation_policy, pricing_format, return/refund_policy, support_phone,
- * website_link, contact_details, out_of_stock_reply → DB-তে nullable, তাই optional।
- */
+
+interface OrderField {
+  id?: string;
+  company_id: string;
+  field_key: string;
+  field_label: string;
+  question_text: string;
+  field_type: string;
+  field_options: string | null;
+  is_required: boolean;
+  display_order: number;
+  is_active: boolean;
+}
+
+const DEFAULT_FIELD_KEYS = [
+  "product_name",
+  "status",
+  "customer_name",
+  "phone",
+  "address",
+  "total_amount",
+  "attributes",
+];
+
+const MANAGE_FIELDS_WEBHOOK =
+  "https://server.presswayy.com/webhook/manage-order-fields";
+const GET_FIELDS_WEBHOOK =
+  "https://server.presswayy.com/webhook/get-order-fields";
+
+function OrderFieldsManager({ companyId }: { companyId?: string }) {
+  const [fields, setFields] = useState<OrderField[]>([]);
+
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [fetchLoading, setFetchLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const [customKeys, setCustomKeys] = useState<string[]>([]);
+  const [isAddingCustomKey, setIsAddingCustomKey] = useState(false);
+  const [customKeyInput, setCustomKeyInput] = useState("");
+
+  const emptyForm: OrderField = {
+    company_id: companyId || "",
+    field_key: "",
+    field_label: "",
+    question_text: "",
+    field_type: "text",
+    field_options: "",
+    is_required: true,
+    display_order: 0,
+    is_active: true,
+  };
+
+  const [formData, setFormData] = useState<OrderField>(emptyForm);
+
+  const fetchCompanyFields = async (id: string) => {
+    setFetchLoading(true);
+    try {
+      const response = await fetch(`${GET_FIELDS_WEBHOOK}?company_id=${id}`);
+      if (response.ok) {
+        const text = await response.text();
+        let data: any = [];
+        if (text) {
+          try {
+            data = JSON.parse(text);
+          } catch {
+            console.warn("Order fields API returned non-JSON response:", text);
+          }
+        }
+        setFields(Array.isArray(data) ? data : []);
+      } else {
+        setFields([]);
+      }
+    } catch (err) {
+      console.error("Order fields fetch error:", err);
+      setFields([]);
+    } finally {
+      setFetchLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!companyId) {
+      setFields([]);
+      setFetchLoading(false);
+      return;
+    }
+    fetchCompanyFields(companyId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId]);
+
+  const handleChange = (
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+    >,
+  ) => {
+    const { name, value, type } = e.target;
+    if (type === "checkbox") {
+      const checked = (e.target as HTMLInputElement).checked;
+      setFormData((prev) => ({ ...prev, [name]: checked }));
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: value }));
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      ...emptyForm,
+      company_id: companyId || "",
+      display_order: fields.length + 1,
+    });
+    setError(null);
+    setIsAddingCustomKey(false);
+    setCustomKeyInput("");
+  };
+
+  const openModal = (field?: OrderField) => {
+    if (field) {
+      const optionsStr =
+        field.field_options && typeof field.field_options === "object"
+          ? JSON.stringify(field.field_options)
+          : field.field_options || "";
+
+      setFormData({ ...field, field_options: optionsStr as string });
+
+      if (
+        field.field_key &&
+        !DEFAULT_FIELD_KEYS.includes(field.field_key) &&
+        !customKeys.includes(field.field_key)
+      ) {
+        setCustomKeys((prev) => [...prev, field.field_key]);
+      }
+    } else {
+      resetForm();
+    }
+    setError(null);
+    setIsModalOpen(true);
+  };
+
+  const handleAddCustomKey = () => {
+    const newKey = customKeyInput.trim().replace(/\s+/g, "_").toLowerCase();
+    if (newKey) {
+      if (
+        !DEFAULT_FIELD_KEYS.includes(newKey) &&
+        !customKeys.includes(newKey)
+      ) {
+        setCustomKeys((prev) => [...prev, newKey]);
+      }
+      setFormData((prev) => ({ ...prev, field_key: newKey }));
+    }
+    setIsAddingCustomKey(false);
+    setCustomKeyInput("");
+  };
+
+  // CREATE & UPDATE
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+
+    if (!companyId) {
+      setError("আগে ID দিন, তারপর অর্ডার ফিল্ড যোগ করুন।");
+      return;
+    }
+
+    if (
+      !formData.field_key ||
+      !formData.field_label ||
+      !formData.question_text
+    ) {
+      setError("Key, Label এবং Question Text পূরণ করা বাধ্যতামূলক!");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const payload = {
+        action: formData.id ? "UPDATE" : "CREATE",
+        data: {
+          ...formData,
+          company_id: companyId,
+          field_options: formData.field_options
+            ? JSON.parse(formData.field_options as string)
+            : null,
+          display_order: Number(formData.display_order),
+        },
+      };
+
+      const response = await fetch(MANAGE_FIELDS_WEBHOOK, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) throw new Error("Network response was not ok");
+
+      setSuccess(
+        formData.id
+          ? "ফিল্ড সফলভাবে আপডেট হয়েছে!"
+          : "নতুন ফিল্ড সফলভাবে যোগ করা হয়েছে!",
+      );
+
+      await fetchCompanyFields(companyId);
+      setIsModalOpen(false);
+      resetForm();
+    } catch (err) {
+      setError("ডেটা সেভ করতে সমস্যা হয়েছে। দয়া করে চেক করুন।");
+      console.error(err);
+    } finally {
+      setLoading(false);
+      setTimeout(() => setSuccess(null), 3000);
+    }
+  };
+
+  // DELETE
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("আপনি কি নিশ্চিত যে এটি মুছে ফেলতে চান?")) return;
+
+    setLoading(true);
+    try {
+      const payload = {
+        action: "DELETE",
+        data: { id, company_id: companyId },
+      };
+
+      const response = await fetch(MANAGE_FIELDS_WEBHOOK, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) throw new Error("Delete request failed");
+
+      setFields((prev) => prev.filter((f) => f.id !== id));
+      setSuccess("ফিল্ডটি মুছে ফেলা হয়েছে!");
+    } catch (err) {
+      setError("মুছে ফেলতে সমস্যা হয়েছে!");
+      console.error(err);
+    } finally {
+      setLoading(false);
+      setTimeout(() => setSuccess(null), 3000);
+    }
+  };
+
+  const allAvailableKeys = [...DEFAULT_FIELD_KEYS, ...customKeys];
+
+  return (
+    <div className="mt-5 rounded-xl border border-dashed border-emerald-200 bg-emerald-50/30 p-4">
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h4 className="text-sm font-bold text-slate-800">
+            অর্ডার ফিল্ড (Order Definition)
+          </h4>
+          <p className="mt-0.5 text-xs text-slate-500">
+            কাস্টমারের কাছ থেকে অর্ডারে কোন তথ্যগুলো নেওয়া হবে তা নির্ধারণ
+            করুন।
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => openModal()}
+          disabled={!companyId}
+          className="flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+        >
+          <Plus size={16} /> নতুন ফিল্ড
+        </button>
+      </div>
+
+      {/* Alerts */}
+      {success && (
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+          <CheckCircle2 size={15} /> {success}
+        </div>
+      )}
+      {error && !isModalOpen && (
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
+          <AlertCircle size={15} /> {error}
+        </div>
+      )}
+
+      {/* List / states */}
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        {!companyId ? (
+          <div className="p-6 text-center text-xs text-slate-500">
+            অর্ডার ফিল্ড ম্যানেজ করতে আগে ID দিন।
+          </div>
+        ) : fetchLoading ? (
+          <div className="flex items-center justify-center gap-2 p-6 text-xs text-slate-400">
+            <Loader2 className="animate-spin" size={16} /> ফিল্ড লোড হচ্ছে...
+          </div>
+        ) : fields.length === 0 ? (
+          <div className="p-6 text-center text-xs text-slate-500">
+            কোনো অর্ডার ফিল্ড নেই। উপরের "নতুন ফিল্ড" বাটন থেকে যোগ করুন।
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-600">
+              <thead className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-700">
+                <tr>
+                  <th className="p-2.5">#</th>
+                  <th className="p-2.5">Key</th>
+                  <th className="p-2.5">Label &amp; Question</th>
+                  <th className="p-2.5">Type</th>
+                  <th className="p-2.5 text-center">Required</th>
+                  <th className="p-2.5 text-center">Status</th>
+                  <th className="p-2.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {[...fields]
+                  .sort((a, b) => a.display_order - b.display_order)
+                  .map((field) => (
+                    <tr key={field.id} className="hover:bg-slate-50">
+                      <td className="p-2.5 font-medium text-slate-900">
+                        {field.display_order}
+                      </td>
+                      <td className="p-2.5">
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600">
+                          {field.field_key}
+                        </span>
+                      </td>
+                      <td className="p-2.5">
+                        <div className="font-medium text-slate-900">
+                          {field.field_label}
+                        </div>
+                        <div className="mt-0.5 text-[11px] text-slate-500">
+                          {field.question_text}
+                        </div>
+                      </td>
+                      <td className="p-2.5 capitalize">{field.field_type}</td>
+                      <td className="p-2.5 text-center">
+                        {field.is_required ? (
+                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-600">
+                            Yes
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-400">
+                            No
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-2.5 text-center">
+                        <span
+                          className={`inline-block h-2 w-2 rounded-full ${
+                            field.is_active ? "bg-emerald-500" : "bg-rose-400"
+                          }`}
+                        />
+                      </td>
+                      <td className="space-x-1 p-2.5 text-right">
+                        <button
+                          type="button"
+                          onClick={() => openModal(field)}
+                          className="rounded-md p-1.5 text-emerald-600 transition-colors hover:bg-emerald-50"
+                          title="Edit"
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(field.id!)}
+                          className="rounded-md p-1.5 text-rose-500 transition-colors hover:bg-rose-50"
+                          title="Delete"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Modal: Add / Edit field */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-slate-900/50 p-4 backdrop-blur-sm">
+          <div className="my-8 w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 p-5">
+              <h3 className="text-lg font-bold text-slate-800">
+                {formData.id ? "ফিল্ড এডিট করুন" : "নতুন ফিল্ড যোগ করুন"}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsModalOpen(false)}
+                className="text-slate-400 transition-colors hover:text-slate-600"
+              >
+                <X size={22} />
+              </button>
+            </div>
+
+            <div className="space-y-5 p-5">
+              {error && (
+                <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-600">
+                  <AlertCircle size={15} /> {error}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                {/* Field Key */}
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-700">
+                    Field Key *
+                  </label>
+                  {!isAddingCustomKey ? (
+                    <select
+                      name="field_key"
+                      value={formData.field_key}
+                      onChange={(e) => {
+                        if (e.target.value === "ADD_CUSTOM_KEY") {
+                          setIsAddingCustomKey(true);
+                          setCustomKeyInput("");
+                        } else {
+                          handleChange(e);
+                        }
+                      }}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                    >
+                      <option value="" disabled>
+                        -- নির্বাচন করুন --
+                      </option>
+                      {allAvailableKeys.map((key) => (
+                        <option key={key} value={key}>
+                          {key}
+                        </option>
+                      ))}
+                      <option
+                        value="ADD_CUSTOM_KEY"
+                        className="font-bold text-emerald-600"
+                      >
+                        ➕ Add Custom Key...
+                      </option>
+                    </select>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={customKeyInput}
+                        onChange={(e) => setCustomKeyInput(e.target.value)}
+                        placeholder="e.g., custom_field_key"
+                        autoFocus
+                        className="w-full rounded-lg border border-emerald-300 px-3 py-2 text-sm outline-none transition-all focus:ring-2 focus:ring-emerald-100"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddCustomKey}
+                        disabled={!customKeyInput.trim()}
+                        className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:bg-emerald-300"
+                      >
+                        Add
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsAddingCustomKey(false);
+                          setCustomKeyInput("");
+                        }}
+                        className="rounded-lg bg-slate-200 px-2.5 py-2 text-slate-700 transition-colors hover:bg-slate-300"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  )}
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    ইউনিক আইডেন্টিফায়ার (স্পেস ছাড়া)
+                  </p>
+                </div>
+
+                {/* Field Label */}
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-700">
+                    Field Label *
+                  </label>
+                  <input
+                    type="text"
+                    name="field_label"
+                    value={formData.field_label}
+                    onChange={handleChange}
+                    placeholder="e.g., কাস্টমারের নাম"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition-all focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-700">
+                  Question Text (Chatbot Prompt) *
+                </label>
+                <input
+                  type="text"
+                  name="question_text"
+                  value={formData.question_text}
+                  onChange={handleChange}
+                  placeholder="e.g., আপনার নামটি বলুন?"
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition-all focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-700">
+                    Field Type
+                  </label>
+                  <select
+                    name="field_type"
+                    value={formData.field_type}
+                    onChange={handleChange}
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition-all focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                  >
+                    <option value="text">Text (Standard Input)</option>
+                    <option value="number">Number</option>
+                    <option value="dropdown">Dropdown / Options</option>
+                    <option value="checkbox">Checkbox (True/False)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-700">
+                    Display Order
+                  </label>
+                  <input
+                    type="number"
+                    name="display_order"
+                    value={formData.display_order}
+                    onChange={handleChange}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition-all focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                  />
+                </div>
+              </div>
+
+              {formData.field_type === "dropdown" && (
+                <div className="rounded-lg border border-emerald-100 bg-emerald-50/50 p-4">
+                  <label className="mb-1 block text-xs font-semibold text-emerald-900">
+                    Field Options (JSON Array)
+                  </label>
+                  <textarea
+                    name="field_options"
+                    value={(formData.field_options as string) || ""}
+                    onChange={handleChange}
+                    placeholder='["Dhaka", "Chattogram", "Sylhet"]'
+                    className="h-24 w-full rounded-lg border border-emerald-200 px-3 py-2 font-mono text-sm outline-none transition-all focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                  />
+                  <p className="mt-1 text-[11px] text-emerald-500">
+                    Valid JSON Array ফরমেটে অপশনগুলো দিন।
+                  </p>
+                </div>
+              )}
+
+              <div className="flex gap-8 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <label className="flex cursor-pointer items-center gap-2.5">
+                  <input
+                    type="checkbox"
+                    name="is_required"
+                    checked={formData.is_required}
+                    onChange={handleChange}
+                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className="text-sm font-medium text-slate-700">
+                    Required Field
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-center gap-2.5">
+                  <input
+                    type="checkbox"
+                    name="is_active"
+                    checked={formData.is_active}
+                    onChange={handleChange}
+                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className="text-sm font-medium text-slate-700">
+                    Active
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-slate-100 pt-5">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100"
+                >
+                  বাতিল করুন
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={loading}
+                  className="flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:opacity-70"
+                >
+                  {loading ? (
+                    <Loader2 className="animate-spin" size={16} />
+                  ) : (
+                    <Save size={16} />
+                  )}
+                  {loading ? "সংরক্ষণ হচ্ছে..." : "সংরক্ষণ করুন"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ========================================================================= */
+
 const FIELD_CONFIG: FieldConfig[] = [
   // ----- ব্যবসার তথ্য -----
   {
@@ -160,15 +765,8 @@ const FIELD_CONFIG: FieldConfig[] = [
   },
 
   // ----- অর্ডার ও প্রাইসিং -----
-  {
-    id: "orderProcess",
-    label: "Order Process - অর্ডার করার প্রক্রিয়া লিখুন *",
-    type: "textarea",
-    group: "অর্ডার ও প্রাইসিং",
-    placeholder: "কাস্টমার কীভাবে অর্ডার করবে, কী তথ্য লাগবে—বিস্তারিত লিখুন",
-    full: true,
-    required: true,
-  },
+  // NOTE: "Order Process" (free-text) ফিল্ড সরানো হয়েছে — এর পরিবর্তে এই
+  // সেকশনে নিচে schema-based OrderFieldsManager রেন্ডার হয়।
   {
     id: "pricingFormat",
     label: "Pricing Format - প্রাইস কীভাবে দেখাবে লিখুন",
@@ -314,8 +912,6 @@ const DEFAULT_ICON = (
 
 type FormValues = Record<string, string>;
 
-// label থেকে ট্রেইলিং " *" এবং "English - বাংলা" এর ইংরেজি অংশ বাদ দিয়ে
-// popup-এ দেখানোর জন্য পরিচ্ছন্ন নাম বের করি।
 function cleanLabel(label: string): string {
   const noStar = label.replace(/\s*\*$/, "");
   const dashIdx = noStar.indexOf(" - ");
@@ -339,8 +935,6 @@ function buildDefaults(fields: FieldConfig[], companyId?: string): FormValues {
   return out;
 }
 
-/* ---------- shared field styling (emerald brand system) ---------- */
-
 const inputBase =
   "w-full rounded-xl border bg-slate-50/70 px-3.5 py-2.5 text-sm text-slate-800 outline-none transition-all duration-150 placeholder:text-slate-400 hover:border-slate-300 focus:bg-white focus:ring-4";
 const okRing =
@@ -351,7 +945,6 @@ export default function SOPForm({ companyId }: SOPFormProps) {
   const { status, isFetching, errorMessage, submitSOP, updateSOP, fetchSOP } =
     useSopStore();
 
-  // এই tenant-এ যে ফিল্ডগুলো প্রযোজ্য
   const activeFields = useMemo(
     () => FIELD_CONFIG.filter((f) => !(f.onlyWhenNew && companyId)),
     [companyId],
@@ -372,16 +965,13 @@ export default function SOPForm({ companyId }: SOPFormProps) {
     defaultValues: buildDefaults(activeFields, companyId),
   });
 
-  // ----- কাস্টম ফিল্ড -----
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [isExisting, setIsExisting] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [newType, setNewType] = useState<"input" | "textarea">("input");
 
-  // ----- missing-required popup -----
   const [missingFields, setMissingFields] = useState<string[]>([]);
 
-  // ----- success popup (সাবমিট/আপডেট সফল হলে এখানে দেখানো হয়) -----
   const [showSuccessPopup, setShowSuccessPopup] = useState(false);
   const [successAction, setSuccessAction] = useState<"submit" | "update">(
     "submit",
@@ -424,10 +1014,10 @@ export default function SOPForm({ companyId }: SOPFormProps) {
               ? savedCustom.map((c: any) => ({ ...c, value: c.value ?? "" }))
               : [],
           );
-          setIsExisting(true); // <--- ডাটা পাওয়া গেছে, তাই এটি UPDATE
+          setIsExisting(true);
         } else {
           setValue("companyId", companyId, { shouldValidate: true });
-          setIsExisting(false); // <--- ডাটা নেই (নতুন আইডি), তাই এটি SUBMIT
+          setIsExisting(false);
         }
       }
     }
@@ -436,10 +1026,13 @@ export default function SOPForm({ companyId }: SOPFormProps) {
 
   const values = watch();
 
+  // অর্ডার ফিল্ড ম্যানেজারের জন্য কার্যকর companyId — prop থাকলে সেটি,
+  // নাহলে নতুন ফর্মে ব্যবহারকারীর টাইপ করা companyId।
+  const effectiveCompanyId = companyId || values.companyId || "";
+
   const isVisible = (f: FieldConfig) =>
     !f.showIf || values[f.showIf.field] === f.showIf.equals;
 
-  // ---- read-only completion progress (visual only; no logic change) ----
   const completion = useMemo(() => {
     const fields = activeFields.filter(isVisible);
     const total = fields.length;
@@ -467,35 +1060,26 @@ export default function SOPForm({ companyId }: SOPFormProps) {
       value: nullIfEmpty(c.value),
     }));
 
-    // isExisting পরিবর্তনের আগেই অ্যাকশনের ধরন আলাদা করে রাখছি,
-    // যাতে popup-এ সঠিক ম্যাসেজ (সাবমিট/আপডেট) দেখানো যায়।
     const wasExisting = isExisting;
 
-    // কনসোলে চেক করার জন্য
     console.log(
       wasExisting ? "Calling Update API..." : "Calling Submit API...",
     );
 
-    // এখানে companyId এর বদলে isExisting চেক করে API কল করা হলো
     const isSuccess = await (wasExisting
       ? updateSOP(payload as any)
       : submitSOP(payload as any));
 
     if (isSuccess) {
-      // টপ-ব্যানারের বদলে popup দেখাই — সাবমিট ও আপডেট দুটোতেই
       setSuccessAction(wasExisting ? "update" : "submit");
       setShowSuccessPopup(true);
 
       if (!wasExisting) {
-        // সফলভাবে নতুন সাবমিট হলে ফর্ম রিসেট না করে isExisting কে true করে দিচ্ছি
-        // যাতে পরের বার সাবমিট করলে updateSOP কল হয়
         setIsExisting(true);
       }
     }
   };
 
-  // required ফিল্ড খালি থাকলে server-এ না পাঠিয়ে popup দেখাই,
-  // এবং প্রথম খালি ফিল্ডে scroll + focus করি।
   const onInvalid = (formErrors: Record<string, any>) => {
     const visibleRequired = activeFields.filter(
       (f) => f.required && isVisible(f),
@@ -507,12 +1091,10 @@ export default function SOPForm({ companyId }: SOPFormProps) {
 
     setMissingFields(missing);
 
-    // প্রথম খালি required ফিল্ডে নিয়ে যাই
     const firstMissing = visibleRequired.find((f) => formErrors[f.id]);
     if (firstMissing) {
       const el = document.getElementById(`field-${firstMissing.id}`);
       el?.scrollIntoView({ behavior: "smooth", block: "center" });
-      // scroll শেষ হওয়ার একটু পরে focus, যাতে jump না লাগে
       setTimeout(() => {
         try {
           setFocus(firstMissing.id);
@@ -616,8 +1198,6 @@ export default function SOPForm({ companyId }: SOPFormProps) {
     );
   };
 
-  /* ---------- loading ---------- */
-
   if (isFetching) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 px-6 py-20 text-slate-500">
@@ -626,8 +1206,6 @@ export default function SOPForm({ companyId }: SOPFormProps) {
       </div>
     );
   }
-
-  /* ---------- form ---------- */
 
   return (
     <div className="flex flex-col">
@@ -677,7 +1255,9 @@ export default function SOPForm({ companyId }: SOPFormProps) {
         <div className="space-y-6">
           {groups.map((group) => {
             const visible = group.fields.filter(isVisible);
-            if (visible.length === 0) return null;
+            const isOrderGroup = group.title === "অর্ডার ও প্রাইসিং";
+            // অর্ডার গ্রুপে static ফিল্ড না থাকলেও OrderFieldsManager দেখাতে হবে
+            if (visible.length === 0 && !isOrderGroup) return null;
 
             return (
               <section
@@ -704,9 +1284,16 @@ export default function SOPForm({ companyId }: SOPFormProps) {
                   <span className="h-px flex-1 bg-gradient-to-r from-slate-200 to-transparent" />
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {group.fields.map(renderField)}
-                </div>
+                {visible.length > 0 && (
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {group.fields.map(renderField)}
+                  </div>
+                )}
+
+                {/* schema-based Order Definition System (former "Order Process") */}
+                {isOrderGroup && (
+                  <OrderFieldsManager companyId={effectiveCompanyId} />
+                )}
               </section>
             );
           })}

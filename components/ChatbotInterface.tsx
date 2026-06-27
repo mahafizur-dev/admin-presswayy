@@ -11,7 +11,6 @@ import { useChatStore, type Message } from "../store/useChatStore";
 import { computeDisplayCost } from "../lib/tokenCost";
 import type { RawCost } from "../lib/tokenCost";
 
-/* ----------------------------- types ----------------------------- */
 
 interface ChatbotInterfaceProps {
   companyId: string;
@@ -48,7 +47,6 @@ type ProcessedMessage = Message & {
   images: string[];
 };
 
-/* --------------------------- constants --------------------------- */
 
 const MAX_ATTACHMENTS = 4;
 const MAX_FILE_MB = 10;
@@ -56,7 +54,6 @@ const GRID_MAX = 4;
 const CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || "";
 const UPLOAD_PRESET = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "";
 
-/* ----------------------------- helpers --------------------------- */
 
 const localId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
@@ -124,8 +121,6 @@ function normalizeImageList(images?: string[]): string[] {
 function looksLikeImageUrl(value: string): boolean {
   if (typeof value !== "string") return false;
   const v = value.trim();
-  // Must be a clean, single-token URL — no stray whitespace inside, which is
-  // the tell-tale sign of a split artifact that would 404 at <img> load time.
   if (!/^https?:\/\/\S+$/.test(v)) return false;
   return (
     /\.(jpg|jpeg|png|gif|webp|avif|svg)(\?.*)?$/i.test(v) ||
@@ -143,10 +138,6 @@ function stripUrlSeparators(value: string): string {
     .trim();
 }
 
-// Splits a text field that may contain one or more image URLs.
-// Splits on protocol boundaries (https://) rather than commas so that
-// Cloudinary transform params like f_auto,q_auto are never broken apart,
-// then trims any separator characters left clinging to each fragment.
 function extractImageUrlsFromText(text: string): string[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
@@ -165,7 +156,6 @@ function extractImageUrlsFromText(text: string): string[] {
     .filter(looksLikeImageUrl);
 }
 
-/* ------------------------------ hooks ---------------------------- */
 
 function useAttachments() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -183,8 +173,6 @@ function useAttachments() {
 
   const clear = useCallback(() => setAttachments([]), []);
 
-  // Core uploader: accepts File[] from any source (file picker OR paste/blob)
-  // and runs each through the same Cloudinary pipeline.
   const addFileArray = useCallback(
     async (files: File[]) => {
       if (!files.length) return;

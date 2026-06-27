@@ -3,17 +3,14 @@
 import { use, useState } from "react";
 import SOPForm from "@/components/SOPForm";
 import ChatbotInterface from "@/components/ChatbotInterface";
+import ActivateFacebookButton from "@/components/ActivateFacebookButton";
 import { notFound } from "next/navigation";
-
-/* ----------------------------- types ----------------------------- */
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
 
 type Tab = "form" | "chat";
-
-/* ------------------------------ icons ---------------------------- */
 
 type IconProps = { className?: string };
 
@@ -45,22 +42,6 @@ const ChatIcon = ({ className = "h-4 w-4" }: IconProps) => (
   </svg>
 );
 
-const ExternalLinkIcon = ({ className = "h-3.5 w-3.5" }: IconProps) => (
-  <svg
-    viewBox="0 0 24 24"
-    className={className}
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3" />
-  </svg>
-);
-
-/* ------------------------------ config --------------------------- */
-
 const TABS: {
   id: Tab;
   label: string;
@@ -70,23 +51,18 @@ const TABS: {
   { id: "chat", label: "লাইভ চ্যাট", Icon: ChatIcon },
 ];
 
-/* ------------------------------ page ----------------------------- */
-
 export default function CompanySOPPage({ params }: PageProps) {
   const { id: companyId } = use(params);
   const [tab, setTab] = useState<Tab>("form");
 
-  // সিকিউরিটি / ভ্যালিডেশন চেক
   if (!companyId || companyId.length < 5) {
     notFound();
   }
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-100">
-      {/* ---------- Top header ---------- */}
       <header className="sticky top-0 z-30 h-16 border-b border-slate-200/70 bg-white/80 backdrop-blur-md">
         <div className="mx-auto flex h-full max-w-[1600px] items-center justify-between px-4 md:px-8">
-          {/* Left Side: Logo & Title */}
           <div className="flex items-center gap-3">
             <div className="leading-tight">
               <h1 className="text-sm font-bold text-slate-800 sm:text-base">
@@ -98,7 +74,6 @@ export default function CompanySOPPage({ params }: PageProps) {
             </div>
           </div>
 
-          {/* Right Side: Badges & Action Button */}
           <div className="flex items-center gap-2 sm:gap-3">
             <span className="hidden items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 md:flex">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
@@ -108,21 +83,11 @@ export default function CompanySOPPage({ params }: PageProps) {
               #{companyId.slice(0, 8)}
             </span>
 
-            {/* Connect Your Page Button */}
-            <a
-              href="https://app.presswayy.com/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
-            >
-              <span>Connect Your Page</span>
-              <ExternalLinkIcon className="h-3.5 w-3.5" />
-            </a>
+            <ActivateFacebookButton companyId={companyId} />
           </div>
         </div>
       </header>
 
-      {/* ---------- Mobile / tablet tab switcher ---------- */}
       <div className="sticky top-[64px] z-20 border-b border-slate-200/70 bg-white/85 backdrop-blur-md lg:hidden">
         <div className="mx-auto flex max-w-[1600px] gap-1.5 p-2">
           {TABS.map(({ id, label, Icon }) => {
@@ -147,7 +112,6 @@ export default function CompanySOPPage({ params }: PageProps) {
         </div>
       </div>
 
-      {/* ---------- Main layout ---------- */}
       <div className="mx-auto max-w-[1600px] px-4 py-5 md:px-8 md:py-8">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start lg:gap-8">
           {/* বাম: SOP Form */}
@@ -159,7 +123,6 @@ export default function CompanySOPPage({ params }: PageProps) {
             </div>
           </section>
 
-          {/* ডান: Chatbot live preview */}
           <aside
             className={`${tab === "chat" ? "block" : "hidden"} lg:col-span-5 lg:sticky lg:top-24 lg:block xl:col-span-4`}
           >
@@ -172,7 +135,6 @@ export default function CompanySOPPage({ params }: PageProps) {
               </h3>
             </div>
 
-            {/* চ্যাটবট নিজের card styling নিয়ে আসে */}
             <ChatbotInterface companyId={companyId} />
 
             <p className="mt-3 text-center text-xs text-slate-400">

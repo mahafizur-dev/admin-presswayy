@@ -89,11 +89,6 @@ function isImageUrl(value: string): boolean {
   );
 }
 
-// একটি text field-এ এক বা একাধিক image URL থাকতে পারে (কমা/whitespace-সেপারেটেড)।
-// Cloudinary transform কমা (f_auto,q_auto) যাতে না ভাঙে তাই protocol boundary (https://)-তে
-// split করি, তারপর প্রতিটি fragment থেকে trailing কমা/সেমিকোলন/space ছেঁটে validate করি।
-// একটিমাত্র URL থাকলেও এটি কাজ করে, আবার "url1, url2" কে দুটি আলাদা URL-এ ভাঙে —
-// যাতে যৌথ string কখনো single <img src> হিসেবে ঢুকে 404 না করে।
 function splitImageUrls(value: string): string[] {
   if (typeof value !== "string") return [];
   const trimmed = value.trim();

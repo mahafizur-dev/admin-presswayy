@@ -8,21 +8,18 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-// UUID format check (358a1e13-52bc-41a8-af31-b6414fd6a6ee এর মতো)
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default function InventoryPage({ params }: PageProps) {
   const { id: companyId } = use(params);
 
-  // company/[id]-এর মতোই validation (এখন UUID format-ও চেক করছে)
   if (!companyId || !UUID_REGEX.test(companyId)) {
     notFound();
   }
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-100">
-      {/* Header — company page-এর same format */}
       <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-white/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3 md:px-8">
           <div className="flex items-center gap-3">

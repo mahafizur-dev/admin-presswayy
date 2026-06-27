@@ -4,7 +4,7 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File;
-    const companyId = formData.get("companyId") as string; // <-- client "companyId" পাঠায়
+    const companyId = formData.get("companyId") as string;
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
 
     const forwardFormData = new FormData();
     forwardFormData.append("file", file);
-    forwardFormData.append("company_id", companyId); // <-- webhook "company_id" চায়
+    forwardFormData.append("company_id", companyId);
 
     const externalResponse = await fetch(
       "https://server.presswayy.com/webhook/product-inventory",
@@ -27,7 +27,6 @@ export async function POST(request: NextRequest) {
         method: "POST",
         body: forwardFormData,
         headers: {
-          // 'Authorization': `Bearer ${process.env.PRESSWAYY_API_KEY}`,
         },
       },
     );

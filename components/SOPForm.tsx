@@ -855,6 +855,16 @@ const FIELD_CONFIG: FieldConfig[] = [
     required: true,
   },
   {
+    id: "imageRecognition",
+    label: "Image Recognition - ছবি কীভাবে শনাক্ত করবে গাইডলাইন লিখুন *",
+    type: "textarea",
+    group: "পলিসি ও গাইডলাইন",
+    placeholder:
+      "AI যেন আমনের প্রোডাক্টের ছবি ঠিকঠাক চিনতে পারে, হেইডার বিস্তারিত কইরা লেখেন।",
+    full: true,
+    required: true,
+  },
+  {
     id: "outOfStockReply",
     label: "Out of Stock Reply - স্টক শেষ হলে কী রিপ্লাই দেবে লিখুন",
     type: "input",

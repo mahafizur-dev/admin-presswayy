@@ -66,6 +66,7 @@ export const sopSchema = z.object({
     .max(100, "1০০ অক্ষরের বেশি হতে পারবে না")
     .optional(),
   imageGuidelines: z.string().trim().min(5, "ইমেজ গাইডলাইন দিন"),
+  imageRecognition: z.string().trim().min(5, "how to recognition image"),
   allowNegotiation: z.string().refine((val) => ["Yes", "No"].includes(val), {
     message: "অনুগ্রহ করে নির্বাচন করুন",
   }),
@@ -131,6 +132,7 @@ export const transformSOPDataToSQL = (data: SOPFormData) => {
     // order_process সরানো হয়েছে
     payment_method: data.paymentMethod,
     image_guidelines: data.imageGuidelines,
+    image_recognition: data.imageRecognition,
     allow_negotiation: data.allowNegotiation === "Yes", // String থেকে Boolean এ কনভার্ট
     negotiation_policy: data.negotiationPolicy,
     pricing_format: data.pricingFormat,
@@ -164,6 +166,7 @@ export const transformSQLToSOPData = (dbData: any): SOPFormData => {
     // orderProcess সরানো হয়েছে
     paymentMethod: dbData.payment_method || "",
     imageGuidelines: dbData.image_guidelines || "",
+    imageRecognition: dbData.image_recognition || "",
     allowNegotiation: dbData.allow_negotiation ? "Yes" : "No",
     negotiationPolicy: dbData.negotiation_policy || "No",
     pricingFormat: dbData.pricing_format || "",

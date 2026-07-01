@@ -3,7 +3,12 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useSopStore } from "../store/useSopStore";
 import { FIELD_CONFIG } from "../lib/sopConfig";
-import { buildSchema, buildDefaults, cleanLabel } from "../lib/sopSchema";
+import {
+  buildSchema,
+  buildDefaults,
+  cleanLabel,
+  fieldVisible,
+} from "../lib/sopSchema";
 import type { FieldConfig, CustomField, FormValues } from "../lib/sopTypes";
 
 export function useSOPForm(companyId?: string) {
@@ -15,10 +20,21 @@ export function useSOPForm(companyId?: string) {
     [companyId],
   );
 
-  const schema = useMemo(() => buildSchema(activeFields), [activeFields]);
+  // Visibility depends on live values (businessType, allowNegotiation...),
+  // so we build the schema at validation time and only enforce `required`
+  // on fields that are currently visible.
+  const resolver = useMemo(
+    () => (vals: FormValues, ctx: any, opts: any) =>
+      zodResolver(buildSchema(activeFields, (f) => fieldVisible(f, vals)))(
+        vals,
+        ctx,
+        opts,
+      ),
+    [activeFields],
+  );
 
   const form = useForm<FormValues>({
-    resolver: zodResolver(schema) as any,
+    resolver: resolver as any,
     defaultValues: buildDefaults(activeFields, companyId),
   });
 
@@ -42,7 +58,6 @@ export function useSOPForm(companyId?: string) {
           const { customFields: savedCustom, ...rest } = data || {};
           reset({ ...buildDefaults(activeFields, companyId), ...rest });
           setIsExisting(true);
-          // Return saved custom fields so parent can initialize useCustomFields
           return Array.isArray(savedCustom)
             ? savedCustom.map((c: any) => ({ ...c, value: c.value ?? "" }))
             : [];
@@ -61,8 +76,8 @@ export function useSOPForm(companyId?: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
 
-  const isVisible = (f: FieldConfig) =>
-    !f.showIf || values[f.showIf.field] === f.showIf.equals;
+  // showIf + hideIf উভয় হ্যান্ডল করে (render + validation একই লজিক)
+  const isVisible = (f: FieldConfig) => fieldVisible(f, values);
 
   const completion = useMemo(() => {
     const fields = activeFields.filter(isVisible);

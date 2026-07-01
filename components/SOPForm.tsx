@@ -64,6 +64,9 @@ export default function SOPForm({ companyId }: SOPFormProps) {
   // effectiveCompanyId: prop takes priority, then typed companyId from form
   const effectiveCompanyId = companyId || values.companyId || "";
 
+  // service ব্যবসায় অর্ডার সেকশনটি Lead Collection হিসেবে দেখাবে
+  const isService = values.businessType === "service";
+
   if (isFetching) return <LoadingState />;
 
   return (
@@ -96,17 +99,24 @@ export default function SOPForm({ companyId }: SOPFormProps) {
             const isOrderGroup = group.title === "অর্ডার ও প্রাইসিং";
             if (visibleFields.length === 0 && !isOrderGroup) return null;
 
+            // service হলে অর্ডার সেকশনের টাইটেল Lead Collection
+            const sectionTitle =
+              isOrderGroup && isService ? "Lead Collection" : group.title;
+
             return (
               <SectionRenderer
                 key={group.title}
-                title={group.title}
+                title={sectionTitle}
                 fields={group.fields}
                 isVisible={isVisible}
                 register={register}
                 errors={errors}
               >
                 {isOrderGroup && (
-                  <OrderFieldsManager companyId={effectiveCompanyId} />
+                  <OrderFieldsManager
+                    companyId={effectiveCompanyId}
+                    businessType={values.businessType}
+                  />
                 )}
               </SectionRenderer>
             );

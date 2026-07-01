@@ -1,6 +1,10 @@
 import React from "react";
 import type { FieldConfig } from "./sopTypes";
 
+// service ব্যবসায় বাদ / শুধু service ব্যবসায় দেখানোর নিয়ম
+const HIDE_FOR_SERVICE = { field: "businessType", in: ["service"] };
+const SERVICE_ONLY = { field: "businessType", in: ["service"] };
+
 export const FIELD_CONFIG: FieldConfig[] = [
   // ── ব্যবসার তথ্য ────────────────────────────────────────────────────────────
   {
@@ -47,6 +51,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
     group: "ব্যবসার তথ্য",
     placeholder: "যেমন: বিকাশ, নগদ, ক্যাশ অন ডেলিভারি ইত্যাদি",
     required: true,
+    hideIf: HIDE_FOR_SERVICE, // service-এ পেমেন্ট মেথড দরকার নেই
   },
 
   // ── AI কনফিগারেশন ───────────────────────────────────────────────────────────
@@ -114,7 +119,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
     required: true,
   },
 
-  // ── অর্ডার ও প্রাইসিং ───────────────────────────────────────────────────────
+  // ── অর্ডার ও প্রাইসিং (service-এ বাদ) ────────────────────────────────────────
   {
     id: "pricingFormat",
     label: "Pricing Format - প্রাইস কীভাবে দেখাবে লিখুন",
@@ -122,6 +127,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
     group: "অর্ডার ও প্রাইসিং",
     placeholder: "যেমন: পণ্যের নাম, সাইজ, দাম, অফার প্রাইস ইত্যাদি",
     full: true,
+    hideIf: HIDE_FOR_SERVICE,
   },
   {
     id: "allowNegotiation",
@@ -132,6 +138,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
     options: ["Yes", "No"],
     required: true,
     default: "No",
+    hideIf: HIDE_FOR_SERVICE,
   },
   {
     id: "negotiationPolicy",
@@ -141,9 +148,22 @@ export const FIELD_CONFIG: FieldConfig[] = [
     placeholder: "দাম কমানো যাবে কি না, কীভাবে উত্তর দেবে—বিস্তারিত লিখুন",
     full: true,
     showIf: { field: "allowNegotiation", equals: "Yes" },
+    hideIf: HIDE_FOR_SERVICE,
   },
 
-  // ── ডেলিভারি ────────────────────────────────────────────────────────────────
+  // ── FAQ (শুধু service) — STARTER, edit as needed ──────────────────────────
+  {
+    id: "faqList",
+    label: "FAQ - সাধারণ প্রশ্ন ও উত্তরগুলো লিখুন",
+    type: "textarea",
+    group: "FAQ",
+    placeholder:
+      "প্র: সার্ভিস চার্জ কত?\nউ: ...\n\nপ্র: কত দিনে কাজ শেষ হয়?\nউ: ...",
+    full: true,
+    showIf: SERVICE_ONLY,
+  },
+
+  // ── ডেলিভারি (service-এ বাদ) ─────────────────────────────────────────────────
   {
     id: "deliveryTimeInsideDhaka",
     label: "Delivery Time Inside Dhaka - ঢাকার ভিতরে ডেলিভারি সময় লিখুন *",
@@ -151,6 +171,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
     group: "ডেলিভারি",
     placeholder: "যেমন: ১ দিন",
     required: true,
+    hideIf: HIDE_FOR_SERVICE,
   },
   {
     id: "deliveryTimeOutsideDhaka",
@@ -159,6 +180,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
     group: "ডেলিভারি",
     placeholder: "যেমন: ২-৩ দিন",
     required: true,
+    hideIf: HIDE_FOR_SERVICE,
   },
   {
     id: "deliveryChargeInsideDhaka",
@@ -166,6 +188,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
     type: "input",
     group: "ডেলিভারি",
     placeholder: "যেমন: 70",
+    hideIf: HIDE_FOR_SERVICE,
   },
   {
     id: "deliveryChargeOutsideDhaka",
@@ -173,9 +196,10 @@ export const FIELD_CONFIG: FieldConfig[] = [
     type: "input",
     group: "ডেলিভারি",
     placeholder: "যেমন: 130",
+    hideIf: HIDE_FOR_SERVICE,
   },
 
-  // ── পলিসি ও গাইডলাইন ────────────────────────────────────────────────────────
+  // ── পলিসি ও গাইডলাইন (service-এ বাদ) ─────────────────────────────────────────
   {
     id: "returnPolicy",
     label: "Return Policy - রিটার্ন পলিসি লিখুন",
@@ -183,6 +207,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
     group: "পলিসি ও গাইডলাইন",
     placeholder: "কোন অবস্থায় রিটার্ন করা যাবে, সময়সীমা কত—বিস্তারিত লিখুন",
     full: true,
+    hideIf: HIDE_FOR_SERVICE,
   },
   {
     id: "refundPolicy",
@@ -191,6 +216,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
     group: "পলিসি ও গাইডলাইন",
     placeholder: "রিফান্ড করা যাবে কি না, কীভাবে করা হবে—বিস্তারিত লিখুন",
     full: true,
+    hideIf: HIDE_FOR_SERVICE,
   },
   {
     id: "imageGuidelines",
@@ -201,6 +227,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
       "AI ছবি কীভাবে ব্যবহার করবে বা ছবির ক্ষেত্রে কী নিয়ম মানবে—বিস্তারিত লিখুন",
     full: true,
     required: true,
+    hideIf: HIDE_FOR_SERVICE,
   },
   {
     id: "imageRecognition",
@@ -211,6 +238,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
       "AI যেন আমনের প্রোডাক্টের ছবি ঠিকঠাক চিনতে পারে, হেইডার বিস্তারিত কইরা লেখেন।",
     full: true,
     required: true,
+    hideIf: HIDE_FOR_SERVICE,
   },
   {
     id: "outOfStockReply",
@@ -219,6 +247,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
     group: "পলিসি ও গাইডলাইন",
     placeholder: "যেমন: দুঃখিত, পণ্যটি বর্তমানে স্টকে নেই",
     full: true,
+    hideIf: HIDE_FOR_SERVICE,
   },
 
   // ── যোগাযোগ ──────────────────────────────────────────────────────────────────
@@ -251,6 +280,12 @@ export const GROUP_ICONS: Record<string, React.ReactNode> = {
   "ব্যবসার তথ্য": <path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4" />,
   "AI কনফিগারেশন": (
     <path d="M12 8V4M8 2h8M3 11h18M5 11v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9M9 16h.01M15 16h.01" />
+  ),
+  "Lead Collection": (
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M22 11h-6" />
+  ),
+  FAQ: (
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2zM9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01" />
   ),
   "অর্ডার ও প্রাইসিং": (
     <path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4zM3 6h18M16 10a4 4 0 0 1-8 0" />

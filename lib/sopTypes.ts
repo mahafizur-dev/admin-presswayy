@@ -11,7 +11,10 @@ export interface FieldConfig {
   full?: boolean;
   default?: string;
   onlyWhenNew?: boolean;
-  showIf?: { field: string; equals: string };
+  // showIf: শর্ত মিললে ফিল্ড দেখাও (equals = একক মান, in = একাধিক মান)
+  showIf?: { field: string; equals?: string; in?: string[] };
+  // hideIf: শর্ত মিললে ফিল্ড লুকাও (showIf-এর উল্টো, অগ্রাধিকার পায়)
+  hideIf?: { field: string; equals?: string; in?: string[] };
 }
 
 export interface CustomField {

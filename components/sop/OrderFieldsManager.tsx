@@ -14,11 +14,31 @@ import {
 import { useOrderFields, DEFAULT_FIELD_KEYS } from "@/hooks/useOrderFields";
 import type { OrderField } from "../../lib/sopTypes";
 
+// service ব্যবসার জন্য lead-collection ভিত্তিক ডিফল্ট key (edit as needed)
+const LEAD_FIELD_KEYS = [
+  "customer_name",
+  "phone",
+  "email",
+  "service_needed",
+  "budget",
+  "preferred_date",
+  "location",
+  "note",
+];
+
 interface OrderFieldsManagerProps {
   companyId?: string;
+  businessType?: string;
 }
 
-export function OrderFieldsManager({ companyId }: OrderFieldsManagerProps) {
+export function OrderFieldsManager({
+  companyId,
+  businessType,
+}: OrderFieldsManagerProps) {
+  // service হলে lead collection মোড
+  const isLead = businessType === "service";
+  const baseKeys = isLead ? LEAD_FIELD_KEYS : DEFAULT_FIELD_KEYS;
+
   const {
     fields,
     loading,
@@ -70,7 +90,7 @@ export function OrderFieldsManager({ companyId }: OrderFieldsManagerProps) {
       setFormData({ ...field, field_options: optionsStr as string });
       if (
         field.field_key &&
-        !DEFAULT_FIELD_KEYS.includes(field.field_key) &&
+        !baseKeys.includes(field.field_key) &&
         !customKeys.includes(field.field_key)
       ) {
         setCustomKeys((prev) => [...prev, field.field_key]);
@@ -99,10 +119,7 @@ export function OrderFieldsManager({ companyId }: OrderFieldsManagerProps) {
   const handleAddCustomKey = () => {
     const newKey = customKeyInput.trim().replace(/\s+/g, "_").toLowerCase();
     if (newKey) {
-      if (
-        !DEFAULT_FIELD_KEYS.includes(newKey) &&
-        !customKeys.includes(newKey)
-      ) {
+      if (!baseKeys.includes(newKey) && !customKeys.includes(newKey)) {
         setCustomKeys((prev) => [...prev, newKey]);
       }
       setFormData((prev) => ({ ...prev, field_key: newKey }));
@@ -120,19 +137,25 @@ export function OrderFieldsManager({ companyId }: OrderFieldsManagerProps) {
     }
   };
 
-  const allAvailableKeys = [...DEFAULT_FIELD_KEYS, ...customKeys];
+  const allAvailableKeys = [...baseKeys, ...customKeys];
+
+  // business type অনুযায়ী হেডিং টেক্সট
+  const heading = isLead
+    ? "লিড কালেকশন ফিল্ড (Lead Collection)"
+    : "অর্ডার ফিল্ড (Order Definition)";
+  const subtitle = isLead
+    ? "কাস্টমারের কাছ থেকে লিডে কোন তথ্যগুলো সংগ্রহ করা হবে তা নির্ধারণ করুন।"
+    : "কাস্টমারের কাছ থেকে অর্ডারে কোন তথ্যগুলো নেওয়া হবে তা নির্ধারণ করুন।";
+  const emptyText = isLead
+    ? 'কোনো লিড ফিল্ড নেই। উপরের "নতুন ফিল্ড" বাটন থেকে যোগ করুন।'
+    : 'কোনো অর্ডার ফিল্ড নেই। উপরের "নতুন ফিল্ড" বাটন থেকে যোগ করুন।';
 
   return (
     <div className="mt-5 rounded-xl border border-dashed border-emerald-200 bg-emerald-50/30 p-4">
       <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h4 className="text-sm font-bold text-slate-800">
-            অর্ডার ফিল্ড (Order Definition)
-          </h4>
-          <p className="mt-0.5 text-xs text-slate-500">
-            কাস্টমারের কাছ থেকে অর্ডারে কোন তথ্যগুলো নেওয়া হবে তা নির্ধারণ
-            করুন।
-          </p>
+          <h4 className="text-sm font-bold text-slate-800">{heading}</h4>
+          <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
         </div>
         <button
           type="button"
@@ -158,7 +181,7 @@ export function OrderFieldsManager({ companyId }: OrderFieldsManagerProps) {
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
         {!companyId ? (
           <div className="p-6 text-center text-xs text-slate-500">
-            অর্ডার ফিল্ড ম্যানেজ করতে আগে ID দিন।
+            ফিল্ড ম্যানেজ করতে আগে ID দিন।
           </div>
         ) : fetchLoading ? (
           <div className="flex items-center justify-center gap-2 p-6 text-xs text-slate-400">
@@ -166,7 +189,7 @@ export function OrderFieldsManager({ companyId }: OrderFieldsManagerProps) {
           </div>
         ) : fields.length === 0 ? (
           <div className="p-6 text-center text-xs text-slate-500">
-            কোনো অর্ডার ফিল্ড নেই। উপরের "নতুন ফিল্ড" বাটন থেকে যোগ করুন।
+            {emptyText}
           </div>
         ) : (
           <div className="overflow-x-auto">

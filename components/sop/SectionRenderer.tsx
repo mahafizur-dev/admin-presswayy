@@ -146,6 +146,10 @@ export function SectionRenderer({
 }: SectionRendererProps) {
   const visibleFields = fields.filter(isVisible);
 
+  // কোনো দৃশ্যমান ফিল্ড নেই এবং কোনো children-ও নেই => পুরো সেকশন বাদ
+  // (service-এ ডেলিভারি / পলিসি সেকশন সম্পূর্ণ গায়েব হয়)
+  if (visibleFields.length === 0 && !children) return null;
+
   return (
     <section className="rounded-2xl border border-slate-100 bg-white/60 p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-shadow duration-200 hover:shadow-[0_4px_16px_rgba(15,23,42,0.06)]">
       <SectionHeader title={title} />

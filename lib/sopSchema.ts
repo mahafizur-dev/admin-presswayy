@@ -89,6 +89,8 @@ export const transformSOPDataToSQL = (data: SOPFormData) => {
     website_link: data.websiteLink,
     contact_details: data.contactDetails,
     out_of_stock_reply: data.outOfStockReply,
+    faq_list: data.faqList,
+    escalation_policy: data.escalationPolicy,
     delivery_time_inside_dhaka: data.deliveryTimeInsideDhaka,
     delivery_time_outside_dhaka: data.deliveryTimeOutsideDhaka,
     delivery_charge_inside_dhaka: toCharge(data.deliveryChargeInsideDhaka),
@@ -121,6 +123,8 @@ export const transformSQLToSOPData = (dbData: any): SOPFormData => {
     websiteLink: dbData.website_link || "",
     contactDetails: dbData.contact_details || "",
     outOfStockReply: dbData.out_of_stock_reply || "",
+    faqList: dbData.faq_list || "",
+    escalationPolicy: dbData.escalation_policy || "",
     deliveryTimeInsideDhaka: dbData.delivery_time_inside_dhaka || "",
     deliveryTimeOutsideDhaka: dbData.delivery_time_outside_dhaka || "",
     deliveryChargeInsideDhaka:

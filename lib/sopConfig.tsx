@@ -31,7 +31,7 @@ export const FIELD_CONFIG: FieldConfig[] = [
     type: "select",
     group: "ব্যবসার তথ্য",
     placeholder: "ব্যবসার ধরন নির্বাচন করুন",
-    options: ["ecommerce", "service", "restaurant", "education"],
+    options: ["ecommerce", "service"],
     required: true,
   },
   {
